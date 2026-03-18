@@ -1,5 +1,6 @@
 import React, { useState, useRef } from "react";
-import { projectId, publicAnonKey } from "/utils/supabase/info";
+const projectId = import.meta.env.VITE_SUPABASE_URL?.replace("https://", "").replace(".supabase.co", "") ?? "";
+const publicAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY ?? "";
 
 /* ── Local design tokens ── */
 const tk = {
