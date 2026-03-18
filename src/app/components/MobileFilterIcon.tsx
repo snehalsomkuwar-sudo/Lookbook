@@ -306,7 +306,8 @@ export function MobileFilterIcon({
   const hasColorScheme = colorScheme.length > 0;
   const hasLayout = layout.length > 0;
   const hasBudgetTier = budgetTier.length > 0;
-  const activeCount  = [hasSearch, hasColor, hasMaterial, hasStyleTag, hasPriceFilter, hasMultiColor, hasThemes, hasColorScheme, hasLayout, hasBudgetTier].filter(Boolean).length;
+  // Don't double-count: budget tier chip already represents the price range
+  const activeCount  = [hasSearch, hasColor, hasMaterial, hasStyleTag, hasBudgetTier ? false : hasPriceFilter, hasMultiColor, hasThemes, hasColorScheme, hasLayout, hasBudgetTier].filter(Boolean).length;
   const hasActive    = activeCount > 0;
 
   const hasGeminiData = paletteSwatches.length > 0 || topMaterials.length > 0;
