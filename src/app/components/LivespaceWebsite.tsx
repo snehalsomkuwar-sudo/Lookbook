@@ -4,6 +4,7 @@ interface Props {
   onOpenLookBook: (room?: string) => void;
   onElevate?: (room?: string) => void;
   isDesktop?: boolean;
+  onAccount?: () => void;
 }
 
 const T = {
@@ -42,7 +43,7 @@ function HScroll({ children, gap = 12 }: { children: React.ReactNode; gap?: numb
   );
 }
 
-export function LivespaceWebsite({ onOpenLookBook, onElevate, isDesktop }: Props) {
+export function LivespaceWebsite({ onOpenLookBook, onElevate, isDesktop, onAccount }: Props) {
   const [activeTab, setActiveTab] = useState<Tab>("Interiors");
 
   const tabs: { id: Tab; icon: string }[] = [
@@ -245,7 +246,7 @@ export function LivespaceWebsite({ onOpenLookBook, onElevate, isDesktop }: Props
           <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={T.fg} strokeWidth="1.8" style={{ cursor:"pointer" }}><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={T.fg} strokeWidth="1.8" style={{ cursor:"pointer" }}><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
-            <div style={{ width: 30, height: 30, borderRadius: "50%", background: "#F0F0F0", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+            <div onClick={onAccount} style={{ width: 30, height: 30, borderRadius: "50%", background: "#F0F0F0", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={T.fg} strokeWidth="1.8"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
             </div>
           </div>
@@ -570,7 +571,7 @@ export function LivespaceWebsite({ onOpenLookBook, onElevate, isDesktop }: Props
           { label: "LookBook", onClick: onOpenLookBook, active: false, icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>, highlight: true },
           { label: "Explore",  onClick: undefined,      active: false, icon: <div style={{ width:40,height:40,borderRadius:"50%",background:"#1A1A1A",display:"flex",alignItems:"center",justifyContent:"center",marginTop:-16,boxShadow:"0 4px 12px rgba(0,0,0,0.25)" }}><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg></div> },
           { label: "Products", onClick: undefined,      active: false, icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg> },
-          { label: "Stores",   onClick: undefined,      active: false, icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><rect x="9" y="15" width="6" height="7"/></svg> },
+          { label: "Account",  onClick: onAccount,      active: false, icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> },
         ] as { label: string; onClick?: () => void; active: boolean; icon: React.ReactNode; highlight?: boolean }[]).map((item, i) => (
           <div key={i} className={`ls-bnav-item${item.active || item.highlight ? " ls-bnav-item-active" : ""}`} style={{ color: item.active || item.highlight ? T.primary : T.mutedFg }} onClick={item.onClick}>
             {item.icon}{item.label}

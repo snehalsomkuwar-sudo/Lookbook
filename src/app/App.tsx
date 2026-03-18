@@ -148,7 +148,7 @@ const _itemDB_STUB: Record<string, any> = {
   },
 }; void _itemDB_STUB;
 
-type ScreenId = "splash" | "property" | "quiz" | "dna" | "gallery" | "explorer" | "cart" | "wishlist" | "success" | "matched-looks" | "moodboard" | "orders" | "elevate";
+type ScreenId = "splash" | "property" | "quiz" | "dna" | "gallery" | "explorer" | "cart" | "wishlist" | "success" | "matched-looks" | "moodboard" | "orders" | "elevate" | "account";
 
 type OrderStatus = "confirmed" | "designer_called" | "site_visit" | "manufacturing" | "move_in_ready";
 
@@ -232,10 +232,10 @@ const LAYOUT_OPTIONS = [
 ];
 
 const BUDGET_TIERS: { label: string; range: [number, number] }[] = [
-  { label: "Budget-Friendly", range: [0, 150000] },
-  { label: "Mid-Range",       range: [150000, 300000] },
-  { label: "High-End",        range: [300000, 600000] },
-  { label: "Luxury",          range: [600000, 10000000] },
+  { label: "Budget-Friendly", range: [0,      100000]   },
+  { label: "Mid-Range",       range: [100000, 150000]   },
+  { label: "High-End",        range: [150000, 200000]   },
+  { label: "Luxury",          range: [200000, 10000000] },
 ];
 
 const COLOR_SCHEME_FAMILIES: Record<string, string[]> = {
@@ -1562,7 +1562,7 @@ export default function App() {
     goTo("success");
   }, [goTo]);
 
-  const screens: ScreenId[] = ["splash", "property", "quiz", "dna", "gallery", "explorer", "cart", "wishlist", "success", "matched-looks", "moodboard", "orders", "elevate"];
+  const screens: ScreenId[] = ["splash", "property", "quiz", "dna", "gallery", "explorer", "cart", "wishlist", "success", "matched-looks", "moodboard", "orders", "elevate", "account"];
 
   /* ── Handle launching LookBook from website ── */
   const handleOpenLookBook = useCallback((room?: string) => {
@@ -1590,7 +1590,7 @@ export default function App() {
       {/* ── Livspace Website Entry ── */}
       {showWebsite && (
         <div style={{ position: "absolute", inset: 0, zIndex: 200, overflowY: "auto" }}>
-          <LivespaceWebsite onOpenLookBook={handleOpenLookBook} onElevate={handleOpenElevate} isDesktop={isDesktop} />
+          <LivespaceWebsite onOpenLookBook={handleOpenLookBook} onElevate={handleOpenElevate} isDesktop={isDesktop} onAccount={() => { setShowWebsite(false); goTo("account"); }} />
         </div>
       )}
       <style>{`
@@ -1654,6 +1654,7 @@ export default function App() {
           {id === "wishlist" && <WishlistScreen goTo={goTo} goBack={goBackFromWishlist} wishlist={wishlist} toggleWishlist={toggleWishlist} setSelectedLook={setSelectedLook} isDesktop={isDesktop} />}
           {id === "success" && <SuccessScreen goTo={goTo} showToast={showToast} isDesktop={isDesktop} orderId={lastOrderId} />}
           {id === "orders" && <MyOrdersScreen goTo={goTo} goBack={goBack} orders={orders} isDesktop={isDesktop} />}
+          {id === "account" && <MyAccountScreen goTo={goTo} goBack={goBack} orders={orders} wishlistCount={wishlistCount} isDesktop={isDesktop} />}
           {id === "elevate" && <ElevateScreen goBack={() => setShowWebsite(true)} cartCount={cartCount} isDesktop={isDesktop} initialRoom={elevateInitialRoom} onBookConsultation={handleElevateConsultation} />}
           {id === "matched-looks" && <MatchedLooksScreen goTo={goTo} goBack={goBack} imageMatchResults={imageMatchResults} lookSimilarityData={lookSimilarityData} setSelectedLook={setSelectedLook} isDesktop={isDesktop} showToast={showToast} isActive={screen === "matched-looks"} />}
           {id === "moodboard" && selectedLook && (
@@ -2254,6 +2255,7 @@ function GalleryScreen({ goTo, goBack, cartCount, showToast, addItem, setSelecte
             tag:      (l.style as any)?.name ?? "",
             name:     l.name,
             price:    `₹${(l.price ?? 0).toLocaleString("en-IN")}`,
+            priceNum: l.price ?? 0,
             items:    `${countMap[l.id] ?? 0} items`,
             roomSlug: (l.room as any)?.slug ?? "",
             featured: section === "looks" && l.is_top_pick,
@@ -2344,6 +2346,7 @@ function GalleryScreen({ goTo, goBack, cartCount, showToast, addItem, setSelecte
           tag:      (l.style as any)?.name ?? "",
           name:     l.name,
           price:    `₹${(l.price ?? 0).toLocaleString("en-IN")}`,
+          priceNum: l.price ?? 0,
           items:    `${countMap[l.id] ?? 0} items`,
           featured: section === "looks" && l.is_top_pick,
           badge:
@@ -2461,7 +2464,7 @@ function GalleryScreen({ goTo, goBack, cartCount, showToast, addItem, setSelecte
     const [minPrice, maxPrice] = galleryPriceRange;
     if (minPrice > 0 || maxPrice < 10000000) {
       pool = pool.filter(l => {
-        const price = l.price ?? 0;
+        const price = l.priceNum ?? 0;
         return price >= minPrice && price <= maxPrice;
       });
     }
@@ -5994,7 +5997,7 @@ function WallDesignDetail({ design, allDesigns, onBack, isDesktop, onBookConsult
             <button
               key={i}
               onClick={() => setActiveImg(i)}
-              style={{ flex: 1, aspectRatio: "4/3", borderRadius: 10, overflow: "hidden", border: `2px solid ${i === activeImg ? tokens.primaryDefault : tokens.surfaceVariant}`, cursor: "pointer", padding: 0, background: "none", transition: "border-color 0.15s" }}
+              style={{ flex: "0 0 auto", height: 80, aspectRatio: "4/3", borderRadius: 10, overflow: "hidden", border: `2px solid ${i === activeImg ? tokens.primaryDefault : tokens.surfaceVariant}`, cursor: "pointer", padding: 0, background: "none", transition: "border-color 0.15s" }}
             >
               <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
             </button>
@@ -6564,123 +6567,884 @@ function ElevateScreen({ goBack, cartCount, isDesktop, initialRoom, onBookConsul
   );
 }
 
-function MyOrdersScreen({ goTo, goBack, orders, isDesktop }: { goTo: (id: ScreenId) => void; goBack: () => void; orders: Order[]; isDesktop?: boolean }) {
-  const [expandedId, setExpandedId] = React.useState<string | null>(null);
+function MyAccountScreen({ goTo, goBack, orders, wishlistCount, isDesktop }: { goTo: (id: ScreenId) => void; goBack: () => void; orders: Order[]; wishlistCount: number; isDesktop?: boolean }) {
+  const [activeSection, setActiveSection] = React.useState<"profile"|"addresses">("profile");
+
+  const USER = { name: "Abhishek Kasina", phone: "+91 98765 43210", email: "abhishek.kasina@demo.com" };
+
+  /* ── Shared hero ── */
+  const Hero = () => (
+    <div style={{ background: "linear-gradient(160deg, #1C4A5A 0%, #122030 60%, #0A1520 100%)", padding: isDesktop ? "28px 40px 32px" : "20px 20px 28px" }}>
+      {/* breadcrumb */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "rgba(255,255,255,0.55)", marginBottom: isDesktop ? 22 : 16 }}>
+        <button onClick={goBack} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.55)", fontSize: 12, cursor: "pointer", padding: 0 }}>Home</button>
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.4)" strokeWidth="2.5"><path d="M9 18l6-6-6-6"/></svg>
+        <span style={{ color: "rgba(255,255,255,0.85)" }}>My Account</span>
+      </div>
+      {/* avatar */}
+      <div style={{ width: isDesktop ? 88 : 72, height: isDesktop ? 88 : 72, borderRadius: 18, background: "white", marginBottom: 14, display: "flex", alignItems: "center", justifyContent: "center", fontSize: isDesktop ? 48 : 38, overflow: "hidden", flexShrink: 0 }}>🧑‍💻</div>
+      <div style={{ fontSize: isDesktop ? 34 : 26, fontWeight: 800, color: "white", letterSpacing: "-0.5px", marginBottom: 8, fontFamily: "'Roboto',sans-serif" }}>{USER.name}</div>
+      <div style={{ fontSize: 14, color: "rgba(255,255,255,0.65)", marginBottom: 4 }}>{USER.phone}</div>
+      <div style={{ fontSize: 14, color: "rgba(255,255,255,0.65)" }}>{USER.email}</div>
+    </div>
+  );
+
+  /* Chevron icon */
+  const Chev = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#AAAAAA" strokeWidth="2"><path d="M9 18l6-6-6-6"/></svg>;
+  /* External link icon */
+  const Ext = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#AAAAAA" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>;
+
+  /* Row used in sidebar / mobile list */
+  const MenuRow = ({ icon, label, sub, active, onClick, rightEl }: { icon: React.ReactNode; label: string; sub?: string; active?: boolean; onClick?: () => void; rightEl?: React.ReactNode }) => (
+    <button onClick={onClick} style={{ width: "100%", background: active ? "#FFF1EF" : "transparent", border: "none", padding: "13px 18px", display: "flex", alignItems: "center", gap: 14, cursor: onClick ? "pointer" : "default", textAlign: "left" }}>
+      <div style={{ width: 32, height: 32, borderRadius: 8, background: active ? "#FFE5E0" : "#F5F5F5", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, color: active ? tokens.primaryDefault : "#555" }}>{icon}</div>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: active ? tokens.primaryDefault : "#1A1A1A" }}>{label}</div>
+        {sub && <div style={{ fontSize: 12, color: "#999", marginTop: 1 }}>{sub}</div>}
+      </div>
+      {rightEl ?? (onClick ? <Chev /> : null)}
+    </button>
+  );
+
+  /* Section divider */
+  const SectionHead = ({ label }: { label: string }) => (
+    <div style={{ padding: "10px 18px 6px", fontSize: 13, fontWeight: 700, color: "#1A1A1A", background: "#F8F8F8", borderTop: "1px solid #F0F0F0", borderBottom: "1px solid #F0F0F0" }}>{label}</div>
+  );
+
+  /* ── Desktop left sidebar ── */
+  const LeftSidebar = () => (
+    <div style={{ width: 280, flexShrink: 0 }}>
+      <div style={{ background: "white", borderRadius: 16, border: "1px solid #E8E8E8", overflow: "hidden" }}>
+        <MenuRow icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="9" y="2" width="6" height="4" rx="1"/><path d="M3 6h18v16H3z"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="12" y2="16"/></svg>} label="Orders" onClick={() => goTo("orders")} />
+        <div style={{ borderTop: "1px solid #F5F5F5" }} />
+        <MenuRow icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>} label="Wishlist" onClick={() => goTo("wishlist")} rightEl={<Ext />} />
+        <div style={{ borderTop: "1px solid #F5F5F5" }} />
+        <MenuRow icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>} label="Track interior project" sub="Briefing call completed" rightEl={<Ext />} />
+        <SectionHead label="Your information" />
+        <MenuRow icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>} label="My profile" sub="Full name, phone & more" active={activeSection === "profile"} onClick={() => setActiveSection("profile")} />
+        <div style={{ borderTop: "1px solid #F5F5F5" }} />
+        <MenuRow icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>} label="My addresses" sub="2 addresses" active={activeSection === "addresses"} onClick={() => setActiveSection("addresses")} />
+        <SectionHead label="Payments" />
+        <MenuRow icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>} label="Gift cards" sub="1 gift card" onClick={() => {}} />
+        <div style={{ borderTop: "1px solid #F5F5F5" }} />
+        <MenuRow icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>} label="Download the app" onClick={() => {}} />
+        <div style={{ borderTop: "1px solid #F0F0F0", padding: "14px 0", textAlign: "center" }}>
+          <button style={{ background: "none", border: "none", textDecoration: "underline", fontSize: 14, color: "#333", cursor: "pointer", fontFamily: "'Roboto',sans-serif" }}>Logout</button>
+        </div>
+      </div>
+    </div>
+  );
+
+  /* ── Desktop right panel: My Profile ── */
+  const ProfilePanel = () => (
+    <div style={{ flex: 1, minWidth: 0, background: "white", borderRadius: 16, border: "1px solid #E8E8E8", padding: "28px 32px" }}>
+      <div style={{ fontSize: 22, fontWeight: 700, color: "#1A1A1A", marginBottom: 28, fontFamily: "'Roboto',sans-serif" }}>My profile</div>
+      {/* avatar with edit */}
+      <div style={{ position: "relative", display: "inline-block", marginBottom: 32 }}>
+        <div style={{ width: 80, height: 80, borderRadius: "50%", background: "#F0F0F0", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 44 }}>🧑‍💻</div>
+        <button style={{ position: "absolute", bottom: 0, right: 0, width: 28, height: 28, borderRadius: "50%", background: "white", border: "1px solid #DDD", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#555" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </button>
+      </div>
+      {/* Fields */}
+      {[
+        { label: "Name",     value: USER.name,  verified: false },
+        { label: "Mobile",   value: USER.phone,  verified: true  },
+        { label: "Email ID", value: USER.email,  verified: false },
+      ].map(f => (
+        <div key={f.label} style={{ border: "1px solid #E0E0E0", borderRadius: 10, padding: "10px 14px", marginBottom: 12, position: "relative" }}>
+          <div style={{ fontSize: 11, color: "#999", marginBottom: 4 }}>{f.label}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ flex: 1, fontSize: 15, color: "#1A1A1A", fontFamily: "'Roboto',sans-serif" }}>{f.value}</span>
+            {f.verified && (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2E7D32" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+            )}
+            <button style={{ background: "none", border: "none", cursor: "pointer", padding: 2 }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#888" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
+  /* ── Desktop right panel: Addresses placeholder ── */
+  const AddressesPanel = () => (
+    <div style={{ flex: 1, minWidth: 0, background: "white", borderRadius: 16, border: "1px solid #E8E8E8", padding: "28px 32px" }}>
+      <div style={{ fontSize: 22, fontWeight: 700, color: "#1A1A1A", marginBottom: 28 }}>My addresses</div>
+      {[
+        { tag: "HOME",   addr: "13252, Prestige Lakeside Habitat, SH Nagar, Bengaluru – 560037" },
+        { tag: "OFFICE", addr: "WeWork Galaxy, 43, Residency Rd, Bengaluru – 560025" },
+      ].map((a, i) => (
+        <div key={i} style={{ border: "1px solid #E8E8E8", borderRadius: 12, padding: "16px 18px", marginBottom: 12, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+          <div>
+            <span style={{ display: "inline-block", background: "#1A1A1A", color: "white", fontSize: 10, fontWeight: 700, borderRadius: 4, padding: "2px 8px", marginBottom: 8, letterSpacing: "0.05em" }}>{a.tag}</span>
+            <div style={{ fontSize: 13, color: "#555", lineHeight: 1.6 }}>{a.addr}</div>
+          </div>
+          <button style={{ flexShrink: 0, background: "none", border: "1px solid #DDD", borderRadius: 8, padding: "5px 12px", fontSize: 12, color: "#555", cursor: "pointer" }}>Edit</button>
+        </div>
+      ))}
+      <button style={{ marginTop: 6, background: "none", border: `1.5px dashed ${tokens.primaryDefault}`, borderRadius: 12, padding: "12px 0", width: "100%", fontSize: 13, fontWeight: 600, color: tokens.primaryDefault, cursor: "pointer" }}>+ Add new address</button>
+    </div>
+  );
+
+  /* ── Mobile card group ── */
+  const MobileSection = ({ title, children }: { title?: string; children: React.ReactNode }) => (
+    <div style={{ background: "white", borderRadius: 16, border: "1px solid #EBEBEB", overflow: "hidden", marginBottom: 12 }}>
+      {title && <div style={{ padding: "14px 18px 10px", fontSize: 14, fontWeight: 700, color: "#1A1A1A" }}>{title}</div>}
+      {children}
+    </div>
+  );
+
+  const MobileRow = ({ icon, label, sub, onClick }: { icon: React.ReactNode; label: string; sub?: string; onClick?: () => void }) => (
+    <button onClick={onClick} style={{ width: "100%", background: "none", border: "none", padding: "13px 18px", display: "flex", alignItems: "center", gap: 14, cursor: "pointer", textAlign: "left", borderTop: "1px solid #F5F5F5" }}>
+      <div style={{ width: 32, height: 32, borderRadius: 8, background: "#F5F5F5", display: "flex", alignItems: "center", justifyContent: "center", color: "#555", flexShrink: 0 }}>{icon}</div>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: "#1A1A1A" }}>{label}</div>
+        {sub && <div style={{ fontSize: 12, color: "#999", marginTop: 1 }}>{sub}</div>}
+      </div>
+      <Chev />
+    </button>
+  );
 
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", background: tokens.surfaceBg, overflow: "hidden" }}>
-      {!isDesktop && <div style={{ background: tokens.surfaceDefault }}><StatusBar /></div>}
-      <div style={{ ...(isDesktop ? { maxWidth: 760, width: "100%", alignSelf: "center", flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" } : { display: "contents" }) }}>
-        <NavBar title="My Orders" onBack={goBack} />
-        <ProgressStrip pct={100} />
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", background: "#F2F2F2", overflow: "hidden" }}>
+      {!isDesktop && <div style={{ background: "white" }}><StatusBar /></div>}
 
-        <div style={{ flex: 1, overflowY: "auto", padding: "16px 16px 32px" }}>
-          {orders.length === 0 ? (
-            /* ── Empty state ── */
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: "60px 24px", gap: 16 }}>
-              <div style={{ fontSize: 56 }}>📦</div>
-              <div style={{ fontSize: 18, fontWeight: 600, color: tokens.onSurfaceDefault }}>No orders yet</div>
-              <div style={{ fontSize: 14, color: tokens.onSurfaceSecondary, lineHeight: 1.6 }}>Place your first order to start tracking it here.</div>
-              <button
-                onClick={() => goTo("gallery")}
-                style={{ marginTop: 8, background: tokens.primaryDefault, color: "white", border: "none", borderRadius: 12, padding: "13px 28px", fontSize: 14, fontWeight: 600, fontFamily: "'Roboto',sans-serif", cursor: "pointer" }}
-              >Browse Looks</button>
+      <div style={{ flex: 1, overflowY: "auto" }}>
+        <Hero />
+
+        {isDesktop ? (
+          /* ── DESKTOP: sidebar + right panel ── */
+          <div style={{ maxWidth: 1100, margin: "0 auto", padding: "32px 40px 48px", display: "flex", gap: 24, alignItems: "flex-start" }}>
+            <LeftSidebar />
+            {activeSection === "profile" ? <ProfilePanel /> : <AddressesPanel />}
+          </div>
+        ) : (
+          /* ── MOBILE: stacked cards ── */
+          <div style={{ padding: "16px 12px 32px" }}>
+
+            {/* Quick actions: Orders + Wishlist side by side */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+              <button onClick={() => goTo("orders")} style={{ background: "white", border: "1px solid #EBEBEB", borderRadius: 16, padding: "20px 16px", display: "flex", flexDirection: "column", gap: 8, cursor: "pointer", textAlign: "left" }}>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#555" strokeWidth="1.8"><rect x="9" y="2" width="6" height="4" rx="1"/><path d="M3 6h18v16H3z"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="12" y2="16"/></svg>
+                <span style={{ fontSize: 15, fontWeight: 700, color: "#1A1A1A" }}>Orders</span>
+              </button>
+              <button onClick={() => goTo("wishlist")} style={{ background: "white", border: "1px solid #EBEBEB", borderRadius: 16, padding: "20px 16px", display: "flex", flexDirection: "column", gap: 8, cursor: "pointer", textAlign: "left" }}>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#555" strokeWidth="1.8"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+                <span style={{ fontSize: 15, fontWeight: 700, color: "#1A1A1A" }}>Wishlist</span>
+              </button>
             </div>
-          ) : (
-            /* ── Order cards ── */
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {orders.map(order => {
-                const status = getOrderStatus(order.placedAt);
-                const stepIdx = ORDER_STATUS_STEPS.findIndex(s => s.key === status);
-                const expanded = expandedId === order.id;
-                const dateStr = new Date(order.placedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 
+            {/* Track interior project */}
+            <MobileSection>
+              <MobileRow
+                icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>}
+                label="Track my interior project"
+                sub="Briefing call completed"
+              />
+            </MobileSection>
+
+            {/* Your information */}
+            <MobileSection title="Your information">
+              <MobileRow
+                icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>}
+                label="My profile"
+                sub="Full name, phone & more"
+              />
+              <MobileRow
+                icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>}
+                label="My addresses"
+                sub="3 addresses"
+              />
+            </MobileSection>
+
+            {/* Payments */}
+            <MobileSection title="Payments">
+              <MobileRow
+                icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>}
+                label="Gift cards"
+                sub="1 gift card"
+              />
+            </MobileSection>
+
+            {/* Download the app */}
+            <MobileSection>
+              <MobileRow
+                icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>}
+                label="Download the app"
+              />
+            </MobileSection>
+
+            {/* Logout */}
+            <div style={{ textAlign: "center", paddingTop: 8, paddingBottom: 16 }}>
+              <button style={{ background: "none", border: "none", textDecoration: "underline", fontSize: 15, color: "#333", cursor: "pointer", fontFamily: "'Roboto',sans-serif" }}>Logout</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   CONSULTATION STAGES
+───────────────────────────────────────────────────── */
+type ConsultStage = "scheduled"|"partner_assigned"|"partner_on_way"|"partner_reached"|"consultation_done"|"boq_shared"|"payment_made"|"delivery_booked"|"installation_booked"|"delivered"|"install_partner_assigned"|"install_partner_on_way"|"install_partner_reached"|"installation_started"|"installation_done"|"order_complete";
+
+const INSTALLATION_SUB_STATES: ConsultStage[] = ["installation_started", "installation_done"];
+
+// partner_assigned / partner_on_way / partner_reached are merged into one visual step
+const PARTNER_SUB_STATES: ConsultStage[] = ["partner_assigned", "partner_on_way", "partner_reached"];
+// install partner sub-states are also merged into one visual step
+const INSTALL_PARTNER_SUB_STATES: ConsultStage[] = ["install_partner_assigned", "install_partner_on_way", "install_partner_reached"];
+
+const CONSULT_STAGES: { key: ConsultStage; label: string; icon: string; desc: string }[] = [
+  { key: "scheduled",           label: "Consultation Scheduled", icon: "📅", desc: "Your consultation has been scheduled" },
+  { key: "partner_assigned",    label: "Partner Assigned",       icon: "👤", desc: "A design expert has been assigned" }, // merged visual step
+  { key: "consultation_done",   label: "Consultation Done",      icon: "✅", desc: "Consultation completed successfully" },
+  { key: "boq_shared",          label: "BOQ Shared",             icon: "📋", desc: "Bill of Quantities shared — make 65% payment to proceed" },
+  { key: "payment_made",        label: "Payment Made (65%)",     icon: "💳", desc: "Initial payment confirmed" },
+  { key: "delivery_booked",     label: "Delivery Slot Booked",   icon: "📦", desc: "Delivery has been scheduled" },
+  { key: "installation_booked", label: "Installation Booked",    icon: "🔧", desc: "Installation slot confirmed" },
+  { key: "delivered",                label: "Items Delivered",   icon: "🏠", desc: "All items have been delivered" },
+  { key: "install_partner_assigned", label: "Partner Assigned",  icon: "👤", desc: "An installation partner has been assigned" }, // merged visual step
+  { key: "installation_started", label: "Installation",           icon: "🔨", desc: "Installation is currently in progress" }, // merged visual step
+  { key: "order_complete",      label: "Order Complete",         icon: "🎉", desc: "Your home is ready. Enjoy your new space!" },
+];
+
+// Maps a ConsultStage to its visual index in CONSULT_STAGES
+// (partner sub-states all map to index 1; install partner sub-states map to their merged index)
+function consultStageIndex(stage: ConsultStage): number {
+  if (PARTNER_SUB_STATES.includes(stage)) return 1;
+  if (INSTALL_PARTNER_SUB_STATES.includes(stage)) return CONSULT_STAGES.findIndex(s => s.key === "install_partner_assigned");
+  if (INSTALLATION_SUB_STATES.includes(stage)) return CONSULT_STAGES.findIndex(s => s.key === "installation_started");
+  return CONSULT_STAGES.findIndex(s => s.key === stage);
+}
+
+// Dynamic label/desc/icon for the merged consultation partner step
+const PARTNER_SUB_LABEL: Record<string, { label: string; icon: string; desc: string }> = {
+  partner_assigned: { label: "Partner Assigned",         icon: "👤", desc: "A design expert has been assigned to you" },
+  partner_on_way:   { label: "Partner on the Way",       icon: "🚗", desc: "Your design expert is heading to your location" },
+  partner_reached:  { label: "Partner at Your Location", icon: "📍", desc: "Your design expert has arrived" },
+};
+
+// Dynamic label/desc/icon for the merged installation step
+const INSTALLATION_SUB_LABEL: Record<string, { label: string; icon: string; desc: string }> = {
+  installation_started: { label: "Installation Started", icon: "🔨", desc: "Installation is currently in progress" },
+  installation_done:    { label: "Installation Done",    icon: "✅", desc: "Installation completed successfully" },
+};
+
+// Dynamic label/desc/icon for the merged installation partner step
+const INSTALL_PARTNER_SUB_LABEL: Record<string, { label: string; icon: string; desc: string }> = {
+  install_partner_assigned: { label: "Partner Assigned",         icon: "👤", desc: "An installation partner has been assigned" },
+  install_partner_on_way:   { label: "Partner on the Way",       icon: "🚗", desc: "Your installation partner is on the way" },
+  install_partner_reached:  { label: "Partner at Your Location", icon: "📍", desc: "Your installation partner has arrived" },
+};
+
+function getConsultStage(placedAt: number): ConsultStage {
+  const d = (Date.now() - placedAt) / 86_400_000;
+  if (d < 1)    return "scheduled";
+  if (d < 1.5)  return "partner_assigned";
+  if (d < 3)    return "partner_on_way";
+  if (d < 4)    return "partner_reached";
+  if (d < 8)    return "consultation_done";
+  if (d < 15)   return "boq_shared";
+  if (d < 25)   return "payment_made";
+  if (d < 35)   return "delivery_booked";
+  if (d < 50)   return "installation_booked";
+  if (d < 55)   return "delivered";
+  if (d < 56)   return "install_partner_assigned";
+  if (d < 57)   return "install_partner_on_way";
+  if (d < 58)   return "install_partner_reached";
+  if (d < 60)   return "installation_started";
+  if (d < 65)   return "installation_done";
+  return "order_complete";
+}
+
+/* ─────────────────────────────────────────────────────
+   ORDER DETAIL VIEW
+───────────────────────────────────────────────────── */
+function OrderDetailView({ order, onBack, isDesktop }: { order: Order; onBack: () => void; isDesktop?: boolean }) {
+  const isConsult = order.items.some(i => i.category === "consultation");
+  const dateStr = new Date(order.placedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+  const expectedDate = new Date(order.placedAt + 5 * 86_400_000).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+  const status = isConsult ? getConsultStage(order.placedAt) : getOrderStatus(order.placedAt);
+  const consultIdx = consultStageIndex(status as ConsultStage);
+  const productStepIdx = ORDER_STATUS_STEPS.findIndex(s => s.key === (status as OrderStatus));
+
+  const PARTNERS = [
+    { name: "Vinay Kumar",  role: "Partner Consultant", initials: "VK", color: "#E8975A" },
+    { name: "Deepak Kumar", role: "Partner Supervisor",  initials: "DK", color: "#5A8EE8" },
+  ];
+  const partner = PARTNERS[parseInt(order.id, 36) % PARTNERS.length];
+
+  const boqAmount = Math.round(order.total * 0.65);
+  const remainingAmount = order.total - boqAmount;
+
+  const LeftPanel = () => (
+    <div style={{ flex: "1 1 0", minWidth: 0, width: "100%" }}>
+      {/* Order details card */}
+      <div style={{ background: "white", borderRadius: isDesktop ? 12 : 0, border: isDesktop ? "1px solid #E8E8E8" : "none", borderBottom: "1px solid #E8E8E8", padding: isDesktop ? "24px" : "20px 16px", marginBottom: isDesktop ? 16 : 8 }}>
+        <h2 style={{ fontSize: 20, fontWeight: 700, color: "#1A1A1A", margin: "0 0 12px", fontFamily: "'Roboto',sans-serif" }}>Order details</h2>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+          <span style={{ fontSize: 14, color: tokens.primaryDefault, fontWeight: 600, textDecoration: "underline", cursor: "pointer" }}>#{order.id}</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#999" strokeWidth="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        </div>
+        <div style={{ fontSize: 13, color: "#666", marginBottom: 20 }}>Ordered online on {dateStr}</div>
+
+        {/* Status banner */}
+        <div style={{ background: "#F0FAF0", borderRadius: 10, padding: "12px 16px", display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2E7D32" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+          <span style={{ fontSize: 14, fontWeight: 600, color: "#2E7D32" }}>
+            {isConsult ? "Your consultation is confirmed" : "Your order is confirmed"}
+          </span>
+        </div>
+
+        {isConsult ? (
+          /* ── Consultation stage timeline ── */
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#1A1A1A", marginBottom: 16 }}>Progress</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+              {CONSULT_STAGES.map((stage, i) => {
+                const done = i < consultIdx;
+                const current = i === consultIdx;
+                const future = i > consultIdx;
+                // For merged partner steps, use dynamic sub-label
+                const isPartnerStep = stage.key === "partner_assigned";
+                const isInstallPartnerStep = stage.key === "install_partner_assigned";
+                const isInstallationStep = stage.key === "installation_started";
+                const partnerSub = isPartnerStep && current ? PARTNER_SUB_LABEL[status as string] : null;
+                const installPartnerSub = isInstallPartnerStep && current ? INSTALL_PARTNER_SUB_LABEL[status as string] : null;
+                const installationSub = isInstallationStep && current ? INSTALLATION_SUB_LABEL[status as string] : null;
+                const activeSub = partnerSub ?? installPartnerSub ?? installationSub;
+                const displayLabel = activeSub ? activeSub.label : stage.label;
+                const displayIcon  = activeSub ? activeSub.icon  : stage.icon;
+                const displayDesc  = activeSub ? activeSub.desc  : stage.desc;
                 return (
-                  <div
-                    key={order.id}
-                    onClick={() => setExpandedId(expanded ? null : order.id)}
-                    style={{ background: tokens.surfaceDefault, borderRadius: 18, border: `1px solid ${tokens.surfaceVariant}`, overflow: "hidden", cursor: "pointer", transition: "box-shadow 0.15s" }}
-                  >
-                    {/* Card header */}
-                    <div style={{ padding: "16px 16px 12px" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
-                        <div>
-                          <div style={{ fontSize: 13, fontFamily: "'Playfair Display',serif", fontWeight: 700, color: tokens.onSurfaceDefault }}>#{order.id}</div>
-                          <div style={{ fontSize: 11, color: tokens.onSurfaceSecondary, marginTop: 2 }}>{dateStr}{order.lookName ? ` · ${order.lookName}` : ""}</div>
-                        </div>
-                        <div style={{ textAlign: "right" }}>
-                          <div style={{ fontSize: 14, fontWeight: 700, color: tokens.primaryDefault }}>{fmt(order.total)}</div>
-                          <div style={{ fontSize: 11, color: tokens.onSurfaceSecondary, marginTop: 2 }}>{order.items.length} item{order.items.length !== 1 ? "s" : ""}</div>
-                        </div>
+                  <div key={stage.key} style={{ display: "flex", gap: 14 }}>
+                    {/* Dot + line */}
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", width: 24, flexShrink: 0 }}>
+                      <div style={{ width: 22, height: 22, borderRadius: "50%", background: done ? "#2E7D32" : current ? tokens.primaryDefault : "#E0E0E0", border: `2px solid ${done ? "#2E7D32" : current ? tokens.primaryDefault : "#E0E0E0"}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, flexShrink: 0 }}>
+                        {done ? <span style={{ color: "white", fontSize: 9, fontWeight: 700 }}>✓</span> : <span style={{ fontSize: 10 }}>{current ? displayIcon : ""}</span>}
                       </div>
-
-                      {/* Current status label */}
-                      <div style={{ display: "inline-flex", alignItems: "center", gap: 5, background: tokens.surfaceBg, borderRadius: 8, padding: "4px 10px", marginTop: 8 }}>
-                        <span style={{ fontSize: 12 }}>{ORDER_STATUS_STEPS[stepIdx]?.em}</span>
-                        <span style={{ fontSize: 11, fontWeight: 600, color: stepIdx === ORDER_STATUS_STEPS.length - 1 ? "#2E7D32" : tokens.primaryDefault }}>{ORDER_STATUS_STEPS[stepIdx]?.label}</span>
-                      </div>
-
-                      {/* 5-step progress bar */}
-                      <div style={{ display: "flex", alignItems: "center", marginTop: 14 }}>
-                        {ORDER_STATUS_STEPS.map((step, i) => {
-                          const done = i < stepIdx;
-                          const current = i === stepIdx;
-                          const dotColor = done ? "#2E7D32" : current ? tokens.primaryDefault : tokens.surfaceVariant;
-                          return (
-                            <React.Fragment key={step.key}>
-                              <div style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flex: "0 0 auto" }}>
-                                <div style={{ width: 22, height: 22, borderRadius: "50%", background: dotColor, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, border: `2px solid ${dotColor}`, transition: "background 0.2s" }}>
-                                  {done ? <span style={{ color: "white", fontSize: 9 }}>✓</span> : <span style={{ fontSize: 9 }}>{current ? step.em : ""}</span>}
-                                </div>
-                              </div>
-                              {i < ORDER_STATUS_STEPS.length - 1 && (
-                                <div style={{ flex: 1, height: 2, background: i < stepIdx ? "#2E7D32" : tokens.surfaceVariant, transition: "background 0.2s" }} />
-                              )}
-                            </React.Fragment>
-                          );
-                        })}
-                      </div>
-                      {/* Step labels row */}
-                      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
-                        {ORDER_STATUS_STEPS.map((step, i) => (
-                          <div key={step.key} style={{ fontSize: 9, color: i <= stepIdx ? tokens.onSurfaceDefault : tokens.onSurfaceSecondary, textAlign: "center", flex: 1, lineHeight: 1.2 }}>{step.label.split(" ")[0]}</div>
-                        ))}
-                      </div>
+                      {i < CONSULT_STAGES.length - 1 && (
+                        <div style={{ width: 2, flex: 1, minHeight: 28, background: done ? "#2E7D32" : "#E8E8E8" }} />
+                      )}
                     </div>
-
-                    {/* Expanded: items breakdown */}
-                    {expanded && (
-                      <div style={{ borderTop: `1px solid ${tokens.surfaceVariant}`, padding: "12px 16px 16px" }}>
-                        <div style={{ fontSize: 12, fontWeight: 600, color: tokens.onSurfaceSecondary, marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>Items</div>
-                        {order.items.map(item => (
-                          <div key={item.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: `1px solid ${tokens.surfaceBg}` }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-                              <span style={{ fontSize: 18 }}>{item.emoji}</span>
-                              <span style={{ fontSize: 13, color: tokens.onSurfaceDefault }}>{item.name}</span>
-                            </div>
-                            <span style={{ fontSize: 13, fontWeight: 500, color: tokens.onSurfaceDefault }}>{fmt(item.price)}</span>
-                          </div>
-                        ))}
-                        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 4 }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: tokens.onSurfaceSecondary }}>
-                            <span>Subtotal</span><span>{fmt(order.itemsTotal)}</span>
-                          </div>
-                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: tokens.onSurfaceSecondary }}>
-                            <span>Installation</span><span>{fmt(4999)}</span>
-                          </div>
-                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, fontWeight: 700, color: tokens.onSurfaceDefault, marginTop: 4, paddingTop: 8, borderTop: `1px solid ${tokens.surfaceVariant}` }}>
-                            <span>Total</span><span style={{ color: tokens.primaryDefault }}>{fmt(order.total)}</span>
-                          </div>
+                    {/* Content */}
+                    <div style={{ paddingBottom: i < CONSULT_STAGES.length - 1 ? 20 : 0, flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: current ? 700 : 500, color: future ? "#AAAAAA" : "#1A1A1A" }}>{displayLabel}</div>
+                      {(done || current) && (
+                        <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>{displayDesc}</div>
+                      )}
+                      {/* Action buttons for key stages */}
+                      {current && stage.key === "boq_shared" && (
+                        <div style={{ marginTop: 10, background: "#FFF8F0", border: "1px solid #FFD9A0", borderRadius: 10, padding: "12px 14px" }}>
+                          <div style={{ fontSize: 12, color: "#B45309", fontWeight: 600, marginBottom: 4 }}>Payment required</div>
+                          <div style={{ fontSize: 12, color: "#666", marginBottom: 10 }}>Pay 65% ({fmt(boqAmount)}) to proceed. Remaining {fmt(remainingAmount)} on delivery.</div>
+                          <button style={{ background: tokens.primaryDefault, color: "white", border: "none", borderRadius: 8, padding: "9px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Pay {fmt(boqAmount)}</button>
                         </div>
-                      </div>
-                    )}
+                      )}
+                      {current && stage.key === "delivery_booked" && (
+                        <button style={{ marginTop: 8, background: "white", color: tokens.primaryDefault, border: `1px solid ${tokens.primaryDefault}`, borderRadius: 8, padding: "7px 16px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Book Delivery Slot</button>
+                      )}
+                      {current && stage.key === "installation_booked" && (
+                        <button style={{ marginTop: 8, background: "white", color: tokens.primaryDefault, border: `1px solid ${tokens.primaryDefault}`, borderRadius: 8, padding: "7px 16px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Book Installation Slot</button>
+                      )}
+                    </div>
                   </div>
                 );
               })}
             </div>
-          )}
+          </div>
+        ) : (
+          /* ── Product order: delivery + items ── */
+          <div>
+            <div style={{ background: "#F8F8F8", borderRadius: 10, padding: "14px 16px", marginBottom: 16 }}>
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#888", letterSpacing: "0.07em", marginBottom: 4 }}>EXPECTED DELIVERY</div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: "#1A1A1A" }}>{expectedDate}, 7–10 AM</div>
+                </div>
+                <button style={{ background: "white", border: "1px solid #DDD", borderRadius: 8, padding: "7px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                  Track
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#333" strokeWidth="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                </button>
+              </div>
+              {/* Item thumbnails */}
+              <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+                {order.items.slice(0, 3).map((item, i) => (
+                  <div key={i} style={{ width: 72, height: 72, borderRadius: 8, background: "#F0EBE3", border: "1px solid #E8E8E8", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 26 }}>{item.emoji}</div>
+                ))}
+              </div>
+              <button style={{ marginTop: 10, background: "none", border: "none", padding: 0, fontSize: 13, color: tokens.primaryDefault, fontWeight: 600, textDecoration: "underline", cursor: "pointer" }}>View all item details</button>
+            </div>
+            {/* Progress bar */}
+            <div style={{ display: "flex", alignItems: "center", marginBottom: 6 }}>
+              {ORDER_STATUS_STEPS.map((step, i) => {
+                const done = i < productStepIdx; const cur = i === productStepIdx;
+                const col = done ? "#2E7D32" : cur ? tokens.primaryDefault : "#E0E0E0";
+                return (
+                  <React.Fragment key={step.key}>
+                    <div style={{ width: 20, height: 20, borderRadius: "50%", background: col, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      {done ? <span style={{ color: "white", fontSize: 9 }}>✓</span> : <span style={{ fontSize: 9 }}>{cur ? step.em : ""}</span>}
+                    </div>
+                    {i < ORDER_STATUS_STEPS.length - 1 && <div style={{ flex: 1, height: 2, background: done ? "#2E7D32" : "#E0E0E0" }} />}
+                  </React.Fragment>
+                );
+              })}
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              {ORDER_STATUS_STEPS.map((s, i) => <div key={s.key} style={{ fontSize: 9, color: i <= productStepIdx ? "#333" : "#AAA", textAlign: "center", flex: 1 }}>{s.label.split(" ")[0]}</div>)}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Manage your order */}
+      <div style={{ background: "white", borderRadius: isDesktop ? 12 : 0, border: isDesktop ? "1px solid #E8E8E8" : "none", borderBottom: "1px solid #E8E8E8", padding: isDesktop ? "20px 24px" : "16px 16px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1A1A1A" strokeWidth="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+          <span style={{ fontSize: 15, fontWeight: 700, color: "#1A1A1A" }}>Manage your order</span>
+        </div>
+        {[
+          { icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>, label: "Cancel order items" },
+          { icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>, label: "Download invoice" },
+          { icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>, label: "Need help?" },
+        ].map((item, i) => (
+          <button key={i} style={{ width: "100%", background: "none", border: "none", padding: "10px 0", display: "flex", alignItems: "center", gap: 10, cursor: "pointer", borderBottom: i < 2 ? "1px solid #F0F0F0" : "none", color: "#333", fontSize: 13, textDecoration: "underline", textAlign: "left" }}>
+            <span style={{ color: "#555" }}>{item.icon}</span>{item.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
+  const RightPanel = () => (
+    <div style={{ width: isDesktop ? 300 : "100%", flexShrink: 0 }}>
+      {/* Address */}
+      <div style={{ background: "white", borderRadius: isDesktop ? 12 : 0, border: isDesktop ? "1px solid #E8E8E8" : "none", borderBottom: "1px solid #E8E8E8", padding: isDesktop ? "20px" : "16px", marginBottom: isDesktop ? 14 : 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 14 }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#1A1A1A" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+          <span style={{ fontSize: 15, fontWeight: 700, color: "#1A1A1A" }}>Address</span>
+        </div>
+        <div style={{ display: "inline-block", background: "#1A1A1A", color: "white", fontSize: 10, fontWeight: 700, borderRadius: 4, padding: "2px 8px", marginBottom: 8, letterSpacing: "0.05em" }}>HOME</div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: "#1A1A1A", marginBottom: 4 }}>+91 98765 43210</div>
+        <div style={{ fontSize: 12, color: "#666", lineHeight: 1.6 }}>13252, Prestige Lakeside Habitat,<br/>SH Nagar, Bengaluru – 560037</div>
+      </div>
+
+      {/* Price details */}
+      <div style={{ background: "white", borderRadius: isDesktop ? 12 : 0, border: isDesktop ? "1px solid #E8E8E8" : "none", borderBottom: "1px solid #E8E8E8", padding: isDesktop ? "20px" : "16px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 16 }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#1A1A1A" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+          <span style={{ fontSize: 15, fontWeight: 700, color: "#1A1A1A" }}>Price details</span>
+        </div>
+        {[
+          { label: "Items subtotal",   value: fmt(order.itemsTotal), color: "#333" },
+          { label: "Delivery charges", value: "FREE",                color: "#2E7D32" },
+          ...(!isConsult ? [{ label: "Installation", value: fmt(4999), color: "#333" }] : []),
+        ].map((row, i) => (
+          <div key={i} style={{ display: "flex", justifyContent: "space-between", marginBottom: 10, fontSize: 13 }}>
+            <span style={{ color: "#666" }}>{row.label}</span>
+            <span style={{ color: row.color, fontWeight: row.color === "#2E7D32" ? 600 : 400 }}>{row.value}</span>
+          </div>
+        ))}
+        <div style={{ borderTop: "1px solid #EBEBEB", paddingTop: 12, display: "flex", justifyContent: "space-between", marginBottom: 14 }}>
+          <span style={{ fontSize: 14, fontWeight: 700, color: "#1A1A1A" }}>Total Amount</span>
+          <span style={{ fontSize: 14, fontWeight: 700, color: "#1A1A1A" }}>{fmt(order.total)}</span>
+        </div>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#999", letterSpacing: "0.06em", marginBottom: 8 }}>PAYMENT METHOD</div>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+          <span style={{ color: "#666" }}>UPI Payment</span>
+          <span style={{ color: "#333" }}>{fmt(order.total)}</span>
         </div>
       </div>
+    </div>
+  );
+
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", background: "#F5F5F5", overflow: "hidden" }}>
+      {/* Header */}
+      <div style={{ background: "white", borderBottom: "1px solid #E8E8E8", padding: isDesktop ? "16px 40px" : "12px 16px", flexShrink: 0 }}>
+        <div style={{ maxWidth: isDesktop ? 1100 : "100%", margin: "0 auto" }}>
+          {/* Breadcrumb */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#888", marginBottom: 12 }}>
+            <button onClick={onBack} style={{ background: "none", border: "none", padding: 0, color: "#888", fontSize: 12, cursor: "pointer" }}>Orders</button>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#CCC" strokeWidth="2.5"><path d="M9 18l6-6-6-6"/></svg>
+            <span style={{ color: "#1A1A1A", fontWeight: 500 }}>#{order.id}</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <button onClick={onBack} style={{ background: "none", border: "none", cursor: "pointer", padding: 4, display: "flex" }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#333" strokeWidth="2"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+            </button>
+            <span style={{ fontSize: isDesktop ? 20 : 17, fontWeight: 700, color: "#1A1A1A", fontFamily: "'Roboto',sans-serif" }}>Order details</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Body */}
+      <div style={{ flex: 1, overflowY: "auto" }}>
+        <div style={{ maxWidth: isDesktop ? 1100 : "100%", margin: "0 auto", padding: isDesktop ? "24px 40px" : "0", display: "flex", flexDirection: isDesktop ? "row" : "column", gap: isDesktop ? 16 : 0, alignItems: "flex-start" }}>
+          <LeftPanel />
+          <RightPanel />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MyOrdersScreen({ goTo, goBack, orders, isDesktop }: { goTo: (id: ScreenId) => void; goBack: () => void; orders: Order[]; isDesktop?: boolean }) {
+  const [activeTab, setActiveTab] = React.useState<"all"|"products"|"services">("all");
+  const [search, setSearch] = React.useState("");
+  const [detailOrderId, setDetailOrderId] = React.useState<string|null>(null);
+  const [showFiltersModal, setShowFiltersModal] = React.useState(false);
+  const [showAll, setShowAll] = React.useState(false);
+
+  const detailOrder = detailOrderId ? orders.find(o => o.id === detailOrderId) : null;
+  if (detailOrder) {
+    return <OrderDetailView order={detailOrder} onBack={() => setDetailOrderId(null)} isDesktop={isDesktop} />;
+  }
+
+  const isConsultation = (o: Order) => o.items.some(i => i.category === "consultation");
+
+  const filtered = orders.filter(o => {
+    if (activeTab === "products" && isConsultation(o)) return false;
+    if (activeTab === "services" && !isConsultation(o)) return false;
+    if (search && !o.id.toLowerCase().includes(search.toLowerCase()) && !(o.lookName || "").toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  });
+
+  const tabs = [
+    { key: "all",      label: "All" },
+    { key: "products", label: "Products" },
+    { key: "services", label: "Services" },
+  ] as const;
+
+  const PARTNERS = [
+    { name: "Vinay Kumar",  role: "Partner Consultant",  initials: "VK", color: "#E8975A" },
+    { name: "Deepak Kumar", role: "Partner Supervisor",  initials: "DK", color: "#5A8EE8" },
+    { name: "Priya Sharma", role: "Design Expert",       initials: "PS", color: "#7E5AE8" },
+  ];
+
+  const MOBILE_SHOW_COUNT = 3;
+  const displayedOrders = (!isDesktop && !showAll) ? filtered.slice(0, MOBILE_SHOW_COUNT) : filtered;
+
+  const filterGroups = [
+    { label: "Order Status", items: ["Ordered","Booked","Delivered","Confirmed","Cancelled","Ongoing","Returned","Completed"] },
+    { label: "Order type",   items: ["Online","Store"] },
+    { label: "Order time",   items: ["Last 30 days","Last 3 months","Last 6 months"] },
+    { label: "Order category", items: ["Product","Service","Material"] },
+  ];
+
+  return (
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", background: "#F5F5F5", overflow: "hidden" }}>
+      {!isDesktop && <div style={{ background: "white" }}><StatusBar /></div>}
+
+      {/* Header */}
+      <div style={{ background: "white", borderBottom: "1px solid #E8E8E8", padding: isDesktop ? "20px 40px 0" : "14px 16px 0", flexShrink: 0 }}>
+        <div style={{ maxWidth: isDesktop ? 1100 : "100%", margin: "0 auto" }}>
+
+          {/* Title row */}
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: isDesktop ? 16 : 12 }}>
+            <button onClick={goBack} style={{ background: "none", border: "none", cursor: "pointer", padding: 4, display: "flex" }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#333" strokeWidth="2"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+            </button>
+            <h1 style={{ fontSize: isDesktop ? 26 : 20, fontWeight: 700, color: "#1A1A1A", fontFamily: "'Roboto',sans-serif", margin: 0, flex: 1 }}>Orders</h1>
+
+            {isDesktop ? (
+              /* Desktop: inline search in header */
+              <div style={{ display: "flex", alignItems: "center", gap: 8, background: "#F5F5F5", border: "1px solid #E0E0E0", borderRadius: 8, padding: "8px 14px", width: 220 }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#999" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search orders" style={{ border: "none", background: "transparent", fontSize: 13, color: "#333", outline: "none", width: "100%" }} />
+              </div>
+            ) : (
+              /* Mobile: Filters button */
+              <button onClick={() => setShowFiltersModal(true)} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "1px solid #DDD", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 600, color: "#333", cursor: "pointer", flexShrink: 0 }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#333" strokeWidth="2"><line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="10" y1="18" x2="14" y2="18"/></svg>
+                Filters
+              </button>
+            )}
+          </div>
+
+          {/* Mobile: full-width search bar */}
+          {!isDesktop && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#F5F5F5", border: "1px solid #E0E0E0", borderRadius: 10, padding: "10px 14px", marginBottom: 4 }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#999" strokeWidth="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by order ID or product" style={{ border: "none", background: "transparent", fontSize: 14, color: "#333", outline: "none", width: "100%" }} />
+            </div>
+          )}
+
+          {/* Tabs */}
+          <div style={{ display: "flex", gap: 0, overflowX: "auto", WebkitOverflowScrolling: "touch" as any, scrollbarWidth: "none" as any }}>
+            {tabs.map(t => (
+              <button key={t.key} onClick={() => setActiveTab(t.key)} style={{ padding: "10px 20px", fontSize: 13, fontWeight: 500, fontFamily: "'Roboto',sans-serif", background: "none", border: "none", borderBottom: `2px solid ${activeTab === t.key ? tokens.primaryDefault : "transparent"}`, color: activeTab === t.key ? tokens.primaryDefault : "#666", cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0 }}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Body */}
+      <div style={{ flex: 1, overflowY: "auto" }}>
+        <div style={{ maxWidth: isDesktop ? 1100 : "100%", margin: "0 auto", padding: isDesktop ? "24px 40px" : "12px 12px 20px", display: "flex", gap: 24, alignItems: "flex-start" }}>
+
+          {/* Filters sidebar — desktop only */}
+          {isDesktop && (
+            <div style={{ width: 200, flexShrink: 0, background: "white", borderRadius: 12, padding: "18px 16px", border: "1px solid #E8E8E8" }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#999", letterSpacing: "0.08em", marginBottom: 14 }}>FILTERS</div>
+              {filterGroups.map(group => (
+                <div key={group.label} style={{ marginBottom: 18 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "#1A1A1A", marginBottom: 8 }}>{group.label}</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {group.items.map(item => (
+                      <label key={item} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#444", cursor: "pointer" }}>
+                        <input type="checkbox" defaultChecked style={{ accentColor: tokens.primaryDefault, width: 13, height: 13 }} />
+                        {item}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                <button style={{ flex: 1, padding: "8px 0", fontSize: 12, fontWeight: 600, color: tokens.primaryDefault, background: "white", border: `1px solid ${tokens.primaryDefault}`, borderRadius: 8, cursor: "pointer" }}>Reset</button>
+                <button style={{ flex: 1, padding: "8px 0", fontSize: 12, fontWeight: 600, color: "white", background: tokens.primaryDefault, border: "none", borderRadius: 8, cursor: "pointer" }}>Apply</button>
+              </div>
+            </div>
+          )}
+
+          {/* Orders list */}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {filtered.length === 0 ? (
+              <div style={{ background: "white", borderRadius: 12, padding: "60px 24px", textAlign: "center", border: "1px solid #E8E8E8" }}>
+                <div style={{ fontSize: 48, marginBottom: 12 }}>📦</div>
+                <div style={{ fontSize: 17, fontWeight: 600, color: "#1A1A1A", marginBottom: 6 }}>No orders yet</div>
+                <div style={{ fontSize: 13, color: "#888", marginBottom: 20 }}>Place your first order to start tracking it here.</div>
+                <button onClick={() => goTo("gallery")} style={{ background: tokens.primaryDefault, color: "white", border: "none", borderRadius: 10, padding: "11px 26px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Browse Looks</button>
+              </div>
+            ) : (
+              <>
+                <div style={{ display: "flex", flexDirection: "column", gap: isDesktop ? 12 : 10 }}>
+                  {displayedOrders.map((order, oi) => {
+                    const consultation = isConsultation(order);
+                    const status = getOrderStatus(order.placedAt);
+                    const dateStr = new Date(order.placedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+                    const partner = PARTNERS[oi % PARTNERS.length];
+                    const delivered = status === "move_in_ready";
+                    const inProgress = status === "site_visit" || status === "manufacturing";
+                    const firstItem = order.items[0];
+                    const extraItems = order.items.length - 1;
+                    const visitDate = new Date(order.placedAt + 3 * 86400000).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+
+                    if (!isDesktop) {
+                      /* ── MOBILE CARD ── */
+                      return (
+                        <div key={order.id} style={{ background: "white", borderRadius: 12, border: "1px solid #E8E8E8", overflow: "hidden" }}>
+                          {/* Card top: order meta */}
+                          <div style={{ padding: "11px 14px", borderBottom: "1px solid #F0F0F0", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                            <span style={{ fontSize: 12, color: "#888" }}>Order ID <span style={{ color: tokens.primaryDefault, fontWeight: 600 }}>#{order.id}</span></span>
+                            <span style={{ fontSize: 11, color: "#CCC" }}>·</span>
+                            <span style={{ fontSize: 12, color: "#888" }}>{dateStr}</span>
+                            <span style={{ fontSize: 11, color: "#CCC" }}>·</span>
+                            <span style={{ fontSize: 12, color: "#888" }}>Online</span>
+                            <button onClick={() => setDetailOrderId(order.id)} style={{ marginLeft: "auto", background: "none", border: "none", fontSize: 12, color: tokens.primaryDefault, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 3, padding: 0 }}>
+                              {consultation ? "View booking" : "View details"}
+                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 18l6-6-6-6"/></svg>
+                            </button>
+                          </div>
+
+                          {/* Item row */}
+                          <div style={{ padding: "12px 14px", display: "flex", gap: 10, alignItems: "flex-start" }}>
+                            <div style={{ width: 56, height: 56, borderRadius: 8, background: "#F5F0E8", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, border: "1px solid #EEE" }}>
+                              {firstItem?.emoji || "📦"}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 13, fontWeight: 600, color: "#1A1A1A", marginBottom: 2, lineHeight: 1.3 }}>{firstItem?.name || "Order"}</div>
+                              <div style={{ fontSize: 12, color: "#555" }}>{fmt(firstItem?.price || order.total)} · 1 Qty</div>
+                              {extraItems > 0 && (
+                                <div style={{ marginTop: 5, display: "inline-block", background: "#F5F5F5", borderRadius: 6, padding: "2px 7px", fontSize: 11, color: "#666" }}>+{extraItems} more item{extraItems > 1 ? "s" : ""}</div>
+                              )}
+                              {order.lookName && (
+                                <div style={{ fontSize: 11, color: "#999", marginTop: 3 }}>{order.lookRoom} · {order.lookName}</div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Status footer */}
+                          <div style={{ padding: "10px 14px", borderTop: "1px solid #F5F5F5", background: "#FAFAFA" }}>
+                            {delivered && !consultation ? (
+                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                  <span style={{ fontSize: 11, fontWeight: 700, color: "#2E7D32", background: "#F0FAF0", borderRadius: 5, padding: "3px 8px" }}>DELIVERED ✓</span>
+                                  <span style={{ fontSize: 11, color: "#999" }}>{dateStr}</span>
+                                </div>
+                                <button style={{ background: "#FF6B00", color: "white", border: "none", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Rate &amp; Review</button>
+                              </div>
+                            ) : consultation ? (
+                              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                                <div style={{ width: 30, height: 30, borderRadius: "50%", background: partner.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "white", flexShrink: 0 }}>{partner.initials}</div>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: 12, fontWeight: 600, color: "#1A1A1A" }}>{partner.name} · {partner.role}</div>
+                                  <div style={{ fontSize: 11, color: "#888" }}>Visit: {visitDate}, 10:00 AM</div>
+                                </div>
+                              </div>
+                            ) : inProgress ? (
+                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                                <span style={{ fontSize: 11, fontWeight: 700, color: "#B45309", background: "#FFF8E7", borderRadius: 5, padding: "3px 8px" }}>IN PROGRESS</span>
+                                <span style={{ fontSize: 11, color: "#999" }}>Est. 30 days</span>
+                              </div>
+                            ) : (
+                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                                <div>
+                                  <div style={{ fontSize: 10, fontWeight: 700, color: "#888", letterSpacing: "0.06em" }}>EXPECTED DELIVERY</div>
+                                  <div style={{ fontSize: 12, fontWeight: 600, color: "#1A1A1A", marginTop: 2 }}>{visitDate}, 7–10 AM</div>
+                                </div>
+                                <button style={{ background: "white", color: "#333", border: "1px solid #DDD", borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+                                  Track
+                                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    /* ── DESKTOP CARD ── */
+                    return (
+                      <div key={order.id} style={{ background: "white", borderRadius: 12, border: "1px solid #E8E8E8", overflow: "hidden" }}>
+                        <div style={{ padding: "12px 16px", borderBottom: "1px solid #F0F0F0", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                          <span style={{ fontSize: 12, color: "#888", fontFamily: "'Roboto',sans-serif" }}>Order ID <span style={{ color: tokens.primaryDefault, fontWeight: 600 }}>#{order.id}</span></span>
+                          <span style={{ fontSize: 11, color: "#aaa" }}>|</span>
+                          <span style={{ fontSize: 12, color: "#888" }}>{dateStr}</span>
+                          <span style={{ fontSize: 11, color: "#aaa" }}>|</span>
+                          <span style={{ fontSize: 12, color: "#888" }}>Online</span>
+                          <div style={{ marginLeft: "auto" }}>
+                            <button onClick={() => setDetailOrderId(order.id)} style={{ background: "none", border: "none", fontSize: 12, color: tokens.primaryDefault, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+                              {consultation ? "View booking details" : "View order details"}
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M9 18l6-6-6-6"/></svg>
+                            </button>
+                          </div>
+                        </div>
+                        <div style={{ padding: "14px 16px", display: "flex", gap: 12, alignItems: "flex-start" }}>
+                          <div style={{ width: 64, height: 64, borderRadius: 8, background: "#F5F0E8", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, border: "1px solid #EEE" }}>
+                            {firstItem?.emoji || "📦"}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 14, fontWeight: 600, color: "#1A1A1A", marginBottom: 3, lineHeight: 1.3 }}>{firstItem?.name || "Order"}</div>
+                            <div style={{ fontSize: 13, color: "#333" }}>{fmt(firstItem?.price || order.total)} &nbsp;·&nbsp; 1 Qty</div>
+                            {extraItems > 0 && (
+                              <div style={{ marginTop: 6, display: "inline-block", background: "#F5F5F5", borderRadius: 6, padding: "3px 8px", fontSize: 11, color: "#666" }}>+{extraItems} item{extraItems > 1 ? "s" : ""}</div>
+                            )}
+                            {order.lookName && (
+                              <div style={{ fontSize: 11, color: "#999", marginTop: 4 }}>{order.lookRoom} · {order.lookName}</div>
+                            )}
+                          </div>
+                          <div style={{ flexShrink: 0, minWidth: 200, textAlign: "right" }}>
+                            {delivered && !consultation ? (
+                              <div>
+                                <div style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "#F0FAF0", borderRadius: 6, padding: "4px 10px", marginBottom: 8 }}>
+                                  <span style={{ fontSize: 11, fontWeight: 700, color: "#2E7D32" }}>DELIVERED ✓</span>
+                                </div>
+                                <div style={{ fontSize: 12, color: "#888", marginBottom: 10 }}>{dateStr}</div>
+                                <button style={{ background: "#FF6B00", color: "white", border: "none", borderRadius: 8, padding: "7px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Rate &amp; Review</button>
+                              </div>
+                            ) : consultation ? (
+                              <div style={{ textAlign: "left", background: "#F8F8F8", borderRadius: 10, padding: "10px 12px" }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                                  <div style={{ width: 32, height: 32, borderRadius: "50%", background: partner.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "white", flexShrink: 0 }}>{partner.initials}</div>
+                                  <div>
+                                    <div style={{ fontSize: 12, fontWeight: 600, color: "#1A1A1A" }}>{partner.name}</div>
+                                    <div style={{ fontSize: 11, color: "#888" }}>{partner.role}</div>
+                                  </div>
+                                </div>
+                                <div style={{ fontSize: 11, color: "#666", marginBottom: 6 }}>You can reach out to me for any queries</div>
+                                <div style={{ fontSize: 10, fontWeight: 700, color: "#888", letterSpacing: "0.06em", marginBottom: 2 }}>SCHEDULED VISIT</div>
+                                <div style={{ fontSize: 12, fontWeight: 600, color: "#1A1A1A" }}>{visitDate}, 10:00 AM</div>
+                              </div>
+                            ) : inProgress ? (
+                              <div>
+                                <div style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "#FFF8E7", borderRadius: 6, padding: "4px 10px", marginBottom: 8 }}>
+                                  <span style={{ fontSize: 11, fontWeight: 700, color: "#B45309" }}>IN PROGRESS</span>
+                                </div>
+                                <div style={{ fontSize: 12, color: "#888" }}>Est. completion in 30 days</div>
+                              </div>
+                            ) : (
+                              <div>
+                                <div style={{ fontSize: 10, fontWeight: 700, color: "#888", letterSpacing: "0.06em", marginBottom: 4, textAlign: "left" }}>EXPECTED DELIVERY</div>
+                                <div style={{ fontSize: 12, fontWeight: 600, color: "#1A1A1A", textAlign: "left", marginBottom: 8 }}>{visitDate}, 7–10 AM</div>
+                                <button style={{ background: "white", color: "#333", border: "1px solid #DDD", borderRadius: 8, padding: "6px 16px", fontSize: 12, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+                                  Track
+                                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* View more orders — mobile only */}
+                {!isDesktop && !showAll && filtered.length > MOBILE_SHOW_COUNT && (
+                  <button onClick={() => setShowAll(true)} style={{ width: "100%", marginTop: 12, padding: "14px", background: "white", border: "1px solid #E0E0E0", borderRadius: 10, fontSize: 14, fontWeight: 600, color: "#333", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                    View more orders
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M6 9l6 6 6-6"/></svg>
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Mobile footer */}
+        {!isDesktop && (
+          <div style={{ background: "#1A1A2E", padding: "32px 20px 20px", marginTop: 8 }}>
+            <div style={{ fontSize: 18, fontWeight: 700, color: "white", marginBottom: 6 }}>Livspace</div>
+            <div style={{ fontSize: 12, color: "#888", marginBottom: 20 }}>India's leading home interior platform</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 20 }}>
+              {["About Us","Careers","Press","Partners","Privacy Policy","Terms of Use"].map(l => (
+                <span key={l} style={{ fontSize: 11, color: "#AAA", cursor: "pointer" }}>{l}</span>
+              ))}
+            </div>
+            <div style={{ fontSize: 11, color: "#666", borderTop: "1px solid #333", paddingTop: 14 }}>© 2024 Livspace. All rights reserved.</div>
+          </div>
+        )}
+      </div>
+
+      {/* Mobile filters modal */}
+      {!isDesktop && showFiltersModal && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 1000, display: "flex", flexDirection: "column" }}>
+          <div style={{ flex: 1, background: "rgba(0,0,0,0.5)" }} onClick={() => setShowFiltersModal(false)} />
+          <div style={{ background: "white", borderRadius: "20px 20px 0 0", padding: "20px 20px 40px", maxHeight: "80vh", overflowY: "auto" }}>
+            <div style={{ display: "flex", alignItems: "center", marginBottom: 20 }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: "#1A1A1A", flex: 1 }}>Filters</div>
+              <button onClick={() => setShowFiltersModal(false)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#333" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+              </button>
+            </div>
+            {filterGroups.map(group => (
+              <div key={group.label} style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "#1A1A1A", marginBottom: 10 }}>{group.label}</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {group.items.map(item => (
+                    <label key={item} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#444", background: "#F5F5F5", borderRadius: 8, padding: "6px 12px", cursor: "pointer" }}>
+                      <input type="checkbox" defaultChecked style={{ accentColor: tokens.primaryDefault, width: 13, height: 13 }} />
+                      {item}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ))}
+            <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+              <button style={{ flex: 1, padding: "12px 0", fontSize: 14, fontWeight: 600, color: tokens.primaryDefault, background: "white", border: `1.5px solid ${tokens.primaryDefault}`, borderRadius: 10, cursor: "pointer" }} onClick={() => setShowFiltersModal(false)}>Reset</button>
+              <button style={{ flex: 1, padding: "12px 0", fontSize: 14, fontWeight: 600, color: "white", background: tokens.primaryDefault, border: "none", borderRadius: 10, cursor: "pointer" }} onClick={() => setShowFiltersModal(false)}>Apply</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

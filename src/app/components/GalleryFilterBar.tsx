@@ -504,7 +504,8 @@ export function GalleryFilterBar({
   const hasColorScheme  = colorScheme.length > 0;
   const hasLayout       = layout.length > 0;
   const hasBudgetTier   = budgetTier.length > 0;
-  const hasActiveFilters = hasSearch || hasColor || hasMaterial || hasStyleTag || hasPriceFilter || hasMultiColor || hasThemes || hasColorScheme || hasLayout || hasBudgetTier;
+  // Don't double-count: budget tier chip already represents the price range
+  const hasActiveFilters = hasSearch || hasColor || hasMaterial || hasStyleTag || (hasBudgetTier ? false : hasPriceFilter) || hasMultiColor || hasThemes || hasColorScheme || hasLayout || hasBudgetTier;
 
   const selectedSwatch = paletteSwatches.find((s) => s.family === colorFamily) ?? null;
 
