@@ -150,7 +150,7 @@ const _itemDB_STUB: Record<string, any> = {
 
 type ScreenId = "splash" | "property" | "quiz" | "dna" | "gallery" | "explorer" | "cart" | "wishlist" | "success" | "matched-looks" | "moodboard" | "orders" | "elevate" | "account";
 
-type OrderStatus = "confirmed" | "designer_called" | "site_visit" | "manufacturing" | "move_in_ready";
+type OrderStatus = "consultation_scheduled" | "consultation_completed" | "out_for_delivery" | "items_delivered" | "installation_scheduled" | "installation_completed";
 
 interface Order {
   id: string;
@@ -161,6 +161,19 @@ interface Order {
   status: OrderStatus;
   lookName?: string;
   lookRoom?: string;
+  // Consultation extras
+  designPrice?: number;           // full design price (used for BOQ calculations)
+  quoteAccepted?: boolean;
+  quoteItems?: { label: string; amount: number }[];
+  deliveryDate?: string;          // e.g. "Mon, 24 Mar · Morning"
+  installDate?: string;
+  consultOtp?: string;            // 4-digit string
+  installOtp?: string;
+  completionPhotos?: string[];
+  rating?: number;                // 1–5
+  review?: string;
+  reviewSubmitted?: boolean;
+  finalPaymentDone?: boolean;
 }
 
 interface CartItem { key: string; price: number; name: string; emoji: string; category?: string; lookName?: string; lookRoom?: string; }
@@ -331,20 +344,22 @@ function generateOrderRef(): string {
 }
 
 const ORDER_STATUS_STEPS: { key: OrderStatus; label: string; em: string }[] = [
-  { key: "confirmed",       label: "Order Confirmed", em: "✅" },
-  { key: "designer_called", label: "Designer Called", em: "📞" },
-  { key: "site_visit",      label: "Site Visit",      em: "📐" },
-  { key: "manufacturing",   label: "Manufacturing",   em: "🏭" },
-  { key: "move_in_ready",   label: "Move-in Ready",   em: "🏠" },
+  { key: "consultation_scheduled",  label: "Consultation Scheduled", em: "📅" },
+  { key: "consultation_completed",  label: "Consultation Done",      em: "✅" },
+  { key: "out_for_delivery",        label: "Out for Delivery",       em: "🚚" },
+  { key: "items_delivered",         label: "Items Delivered",        em: "📦" },
+  { key: "installation_scheduled",  label: "Installation Scheduled", em: "🔨" },
+  { key: "installation_completed",  label: "Installation Done",      em: "🏠" },
 ];
 
 function getOrderStatus(placedAt: number): OrderStatus {
   const days = (Date.now() - placedAt) / 86_400_000;
-  if (days < 2)  return "confirmed";
-  if (days < 5)  return "designer_called";
-  if (days < 10) return "site_visit";
-  if (days < 35) return "manufacturing";
-  return "move_in_ready";
+  if (days < 3)  return "consultation_scheduled";
+  if (days < 7)  return "consultation_completed";
+  if (days < 20) return "out_for_delivery";
+  if (days < 30) return "items_delivered";
+  if (days < 40) return "installation_scheduled";
+  return "installation_completed";
 }
 
 /* ── BHK Room Configs ── */
@@ -1501,7 +1516,7 @@ export default function App() {
       items: [...cart],
       itemsTotal: cart.reduce((s, i) => s + i.price, 0),
       total: cart.reduce((s, i) => s + i.price, 0) + 4999,
-      status: "confirmed",
+      status: "consultation_scheduled",
       lookName: selectedLook?.name,
       lookRoom: selectedLook?.room?.replace("\n", " "),
     };
@@ -1543,15 +1558,35 @@ export default function App() {
   }, []);
 
   const handleElevateConsultation = useCallback((design: WallDesign) => {
+    const dp = design.price; // actual design price (e.g. ₹45,000)
+    const gst = Math.round(dp * 0.18);
+    const quoteItems = [
+      { label: "Design Fee",           amount: Math.round(dp * 0.60) },
+      { label: "Material & Panels",    amount: Math.round(dp * 0.25) },
+      { label: "Installation Charges", amount: Math.round(dp * 0.15) },
+      { label: "GST (18%)",            amount: gst },
+      { label: "Site Visit (paid)",    amount: -99 },
+    ];
+    const totalWithGst = dp + gst - 99;
+    // 4-digit OTP strings
+    const consultOtp  = String(Math.floor(Math.random() * 9000) + 1000);
+    const installOtp  = String(Math.floor(Math.random() * 9000) + 1000);
+    // completion photos from the design gallery
+    const completionPhotos = design.images ?? [design.img];
     const newOrder: Order = {
       id: generateOrderRef(),
       placedAt: Date.now(),
       items: [{ key: `elev::${design.id}`, price: 99, name: "Wall Design Consultation", emoji: "🎨", category: "consultation", lookName: design.name, lookRoom: design.room }],
       itemsTotal: 99,
-      total: 99,
+      total: totalWithGst,
       status: "confirmed",
       lookName: design.name,
       lookRoom: design.room,
+      designPrice: totalWithGst,
+      quoteItems,
+      consultOtp,
+      installOtp,
+      completionPhotos,
     };
     setOrders(prev => {
       const updated = [newOrder, ...prev];
@@ -1653,7 +1688,13 @@ export default function App() {
           {id === "cart" && <CartScreen goTo={goTo} goBack={goBack} cart={cart} cartTotal={cartTotal} removeItem={removeItem} selectedLook={selectedLook} isDesktop={isDesktop} setGalleryInitialRoom={setGalleryInitialRoom} onPlaceOrder={() => { const newId = placeOrder(); setLastOrderId(newId); goTo("success"); }} />}
           {id === "wishlist" && <WishlistScreen goTo={goTo} goBack={goBackFromWishlist} wishlist={wishlist} toggleWishlist={toggleWishlist} setSelectedLook={setSelectedLook} isDesktop={isDesktop} />}
           {id === "success" && <SuccessScreen goTo={goTo} showToast={showToast} isDesktop={isDesktop} orderId={lastOrderId} />}
-          {id === "orders" && <MyOrdersScreen goTo={goTo} goBack={goBack} orders={orders} isDesktop={isDesktop} />}
+          {id === "orders" && <MyOrdersScreen goTo={goTo} goBack={goBack} orders={orders} isDesktop={isDesktop} onUpdateOrder={(updated: Order) => {
+            setOrders(prev => {
+              const next = prev.map(o => o.id === updated.id ? updated : o);
+              try { localStorage.setItem("lvs_orders", JSON.stringify(next)); } catch {}
+              return next;
+            });
+          }} />}
           {id === "account" && <MyAccountScreen goTo={goTo} goBack={goBack} orders={orders} wishlistCount={wishlistCount} isDesktop={isDesktop} />}
           {id === "elevate" && <ElevateScreen goBack={() => setShowWebsite(true)} cartCount={cartCount} isDesktop={isDesktop} initialRoom={elevateInitialRoom} onBookConsultation={handleElevateConsultation} />}
           {id === "matched-looks" && <MatchedLooksScreen goTo={goTo} goBack={goBack} imageMatchResults={imageMatchResults} lookSimilarityData={lookSimilarityData} setSelectedLook={setSelectedLook} isDesktop={isDesktop} showToast={showToast} isActive={screen === "matched-looks"} />}
@@ -5789,11 +5830,29 @@ function WallDesignDetail({ design, allDesigns, onBack, isDesktop, onBookConsult
     return next;
   });
 
-  const whyFeatures = [
-    { icon: "⭐", title: "Premium Quality",    desc: "Crafted with the finest materials for lasting beauty" },
-    { icon: "⚡", title: "Quick Installation", desc: "Professionally installed with minimal disruption" },
-    { icon: "🎨", title: "Custom Design",      desc: "Tailored to your space and style preferences" },
-    { icon: "🛡️", title: "10yr Warranty",     desc: "Long-term peace of mind on all installations" },
+  const KEY_PROPS_MAP: Record<string, { icon: string; label: string }[]> = {
+    Metal:   [{ icon: "💧", label: "Rust Resistant" }, { icon: "✨", label: "High Gloss" }, { icon: "🧹", label: "Easy Clean" }, { icon: "🔥", label: "Heat Resistant" }],
+    Wood:    [{ icon: "🌿", label: "Natural Look" }, { icon: "🌱", label: "Eco-Friendly" }, { icon: "🔨", label: "Easy Install" }, { icon: "🛡️", label: "Termite Resistant" }],
+    Fabric:  [{ icon: "🤲", label: "Soft Texture" }, { icon: "☀️", label: "Fade Resistant" }, { icon: "🧹", label: "Easy Clean" }, { icon: "🔥", label: "Fire Retardant" }],
+    Glass:   [{ icon: "✨", label: "High Gloss" }, { icon: "💧", label: "Waterproof" }, { icon: "🧹", label: "Easy Clean" }, { icon: "🌟", label: "UV Resistant" }],
+    default: [{ icon: "🌟", label: "Premium Quality" }, { icon: "💧", label: "Waterproof" }, { icon: "🧹", label: "Easy Clean" }, { icon: "🛡️", label: "UV Resistant" }],
+  };
+  const keyProps = KEY_PROPS_MAP[design.material] ?? KEY_PROPS_MAP.default;
+
+  const IDEAL_ROOMS: Record<string, string[]> = {
+    "Living Room": ["Living Room", "Bedroom", "Hallway"],
+    "Bedroom":     ["Bedroom", "Living Room", "Study"],
+    "Kitchen":     ["Kitchen", "Dining", "Utility"],
+    "Bathroom":    ["Bathroom", "Laundry"],
+    "Office":      ["Office", "Study", "Library"],
+    "Kids Room":   ["Kids Room", "Playroom", "Nursery"],
+  };
+  const idealRooms = IDEAL_ROOMS[design.room] ?? [design.room];
+
+  const offers = [
+    { tag: "NEW", code: "ELEV5",    title: "5% off",  desc: "On your first Elevate order", color: "#E8F5E9", border: "#A5D6A7", text: "#2E7D32" },
+    { tag: "HOT", code: "ELEV500",  title: "₹500 off", desc: "On orders above ₹15,000",    color: "#FFF8E1", border: "#FFD54F", text: "#E65100" },
+    { tag: "TOP", code: "DESIGN10", title: "10% off", desc: "On full room makeover bundle", color: "#F3E5F5", border: "#CE93D8", text: "#6A1B9A" },
   ];
 
   /* ── Booking modal ── */
@@ -5949,49 +6008,71 @@ function WallDesignDetail({ design, allDesigns, onBack, isDesktop, onBookConsult
   );
 
   /* ── Image gallery ── */
+  const SPECS_SLIDE = images.length; // virtual slide index
+  const totalSlides = images.length + 1;
+  const isSpecsSlide = activeImg === SPECS_SLIDE;
+  const specRows = [
+    { label: "FINISH",        value: design.tag },
+    { label: "BASE MATERIAL", value: design.material },
+    { label: "SIZE",          value: "14ft × 9ft" },
+    { label: "SURFACE",       value: design.room },
+  ];
+
   const ImageGallery = ({ thumbsBelow }: { thumbsBelow?: boolean }) => (
     <div style={{ position: "relative" }}>
       {/* Main image */}
       <div style={{ width: "100%", aspectRatio: "4/3", position: "relative", overflow: "hidden", background: "linear-gradient(135deg,#E8D8C4,#D4C0A8)", ...(thumbsBelow ? { borderRadius: 16 } : {}) }}>
         <img
           key={activeImg}
-          src={images[activeImg]}
+          src={images[isSpecsSlide ? 0 : activeImg]}
           alt={design.name}
           style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
         />
-        {design.badge && (
+        {/* Key Features overlay on specs slide */}
+        {isSpecsSlide && (
+          <div style={{ position: "absolute", inset: 0, display: "flex" }}>
+            {/* Left dark overlay with specs */}
+            <div style={{ width: "46%", background: "linear-gradient(to right, rgba(0,0,0,0.82) 70%, rgba(0,0,0,0))", padding: "28px 24px", display: "flex", flexDirection: "column", justifyContent: "flex-start" }}>
+              <div style={{ fontSize: 20, fontWeight: 800, color: "white", fontFamily: "var(--font-gilroy)", marginBottom: 20 }}>Key Features</div>
+              {specRows.map((row, ri) => (
+                <div key={ri}>
+                  {ri > 0 && <div style={{ borderTop: "1px dashed rgba(255,255,255,0.25)", margin: "12px 0" }} />}
+                  <div style={{ fontSize: 10, fontWeight: 600, color: "rgba(255,255,255,0.6)", letterSpacing: "0.1em", marginBottom: 4 }}>{row.label}</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "white" }}>{row.value}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {design.badge && !isSpecsSlide && (
           <div style={{ position: "absolute", top: 12, left: 12, padding: "4px 10px", borderRadius: 6, fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", background: design.badge === "PICK" ? tokens.extendedMustard : tokens.primaryDefault, color: design.badge === "PICK" ? tokens.onSurfaceDefault : "white" }}>
             {design.badge}
           </div>
         )}
         {/* Prev / Next arrows */}
-        {images.length > 1 && (
-          <>
-            <button
-              onClick={() => setActiveImg(i => (i - 1 + images.length) % images.length)}
-              style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", width: 32, height: 32, borderRadius: "50%", background: "rgba(255,255,255,0.85)", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, color: tokens.onSurfaceDefault, boxShadow: "0 1px 4px rgba(0,0,0,0.15)" }}
-            >‹</button>
-            <button
-              onClick={() => setActiveImg(i => (i + 1) % images.length)}
-              style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", width: 32, height: 32, borderRadius: "50%", background: "rgba(255,255,255,0.85)", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, color: tokens.onSurfaceDefault, boxShadow: "0 1px 4px rgba(0,0,0,0.15)" }}
-            >›</button>
-          </>
-        )}
+        <button
+          onClick={() => setActiveImg(i => (i - 1 + totalSlides) % totalSlides)}
+          style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", width: 32, height: 32, borderRadius: "50%", background: "rgba(255,255,255,0.85)", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, color: tokens.onSurfaceDefault, boxShadow: "0 1px 4px rgba(0,0,0,0.15)" }}
+        >‹</button>
+        <button
+          onClick={() => setActiveImg(i => (i + 1) % totalSlides)}
+          style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", width: 32, height: 32, borderRadius: "50%", background: "rgba(255,255,255,0.85)", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, color: tokens.onSurfaceDefault, boxShadow: "0 1px 4px rgba(0,0,0,0.15)" }}
+        >›</button>
         {/* Dot indicators (mobile / no thumbs) */}
-        {!thumbsBelow && images.length > 1 && (
+        {!thumbsBelow && (
           <div style={{ position: "absolute", bottom: 10, left: "50%", transform: "translateX(-50%)", display: "flex", gap: 5 }}>
-            {images.map((_, i) => (
+            {Array.from({ length: totalSlides }).map((_, i) => (
               <button key={i} onClick={() => setActiveImg(i)} style={{ width: i === activeImg ? 16 : 6, height: 6, borderRadius: 3, background: i === activeImg ? "white" : "rgba(255,255,255,0.5)", border: "none", cursor: "pointer", padding: 0, transition: "all 0.2s" }} />
             ))}
           </div>
         )}
         {/* Image counter badge */}
         <div style={{ position: "absolute", bottom: 10, right: 12, padding: "3px 8px", borderRadius: 12, background: "rgba(0,0,0,0.45)", fontSize: 11, color: "white" }}>
-          {activeImg + 1} / {images.length}
+          {activeImg + 1} / {totalSlides}
         </div>
       </div>
       {/* Thumbnail strip (desktop) */}
-      {thumbsBelow && images.length > 1 && (
+      {thumbsBelow && (
         <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
           {images.map((src, i) => (
             <button
@@ -6002,6 +6083,16 @@ function WallDesignDetail({ design, allDesigns, onBack, isDesktop, onBookConsult
               <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
             </button>
           ))}
+          {/* Key Features thumbnail */}
+          <button
+            onClick={() => setActiveImg(SPECS_SLIDE)}
+            style={{ flex: "0 0 auto", height: 80, aspectRatio: "4/3", borderRadius: 10, overflow: "hidden", border: `2px solid ${isSpecsSlide ? tokens.primaryDefault : tokens.surfaceVariant}`, cursor: "pointer", padding: 0, background: "none", transition: "border-color 0.15s", position: "relative" }}
+          >
+            <img src={images[0]} alt="specs" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+            <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <span style={{ fontSize: 9, fontWeight: 700, color: "white", textAlign: "center", lineHeight: 1.3 }}>KEY{"\n"}FEATURES</span>
+            </div>
+          </button>
         </div>
       )}
     </div>
@@ -6009,7 +6100,7 @@ function WallDesignDetail({ design, allDesigns, onBack, isDesktop, onBookConsult
 
   /* ── Shared section blocks (used in both layouts) ── */
   const CostBreakdown = () => (
-    <div style={{ background: tokens.surfaceDefault, borderRadius: isDesktop ? 12 : 0, border: isDesktop ? `1px solid ${tokens.surfaceVariant}` : "none", padding: "0 16px 4px" }}>
+    <div style={{ padding: "0 20px 4px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 0", borderBottom: `1px solid ${tokens.surfaceVariant}` }}>
         <span style={{ fontSize: 18 }}>🏗️</span>
         <span style={{ flex: 1, fontSize: 13, color: tokens.onSurfaceDefault }}>Base wall design</span>
@@ -6032,7 +6123,7 @@ function WallDesignDetail({ design, allDesigns, onBack, isDesktop, onBookConsult
   );
 
   const ProductsRow = () => (
-    <div style={{ background: tokens.surfaceDefault, borderRadius: isDesktop ? 12 : 0, border: isDesktop ? `1px solid ${tokens.surfaceVariant}` : "none", padding: isDesktop ? "16px" : "16px 0 16px 16px" }}>
+    <div style={{ padding: isDesktop ? "16px 20px" : "16px 0 16px 16px" }}>
       <div style={{ fontSize: 13, fontWeight: 600, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 12, ...(isDesktop ? {} : {}) }}>Products &amp; accessories used</div>
       <div style={{ display: "flex", gap: 10, overflowX: "auto", ...(isDesktop ? {} : { paddingRight: 16 }), scrollbarWidth: "none" } as React.CSSProperties}>
         {swatches.map((s, i) => (
@@ -6057,7 +6148,7 @@ function WallDesignDetail({ design, allDesigns, onBack, isDesktop, onBookConsult
   );
 
   const SimilarLooks = () => similar.length === 0 ? null : (
-    <div style={{ background: tokens.surfaceDefault, borderRadius: isDesktop ? 12 : 0, border: isDesktop ? `1px solid ${tokens.surfaceVariant}` : "none", padding: isDesktop ? "20px" : "20px 0 0 16px" }}>
+    <div style={{ background: "transparent", borderRadius: 0, border: "none", padding: isDesktop ? "0" : "20px 0 20px 16px" }}>
       <div style={{ fontSize: 14, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 14 }}>Explore similar looks</div>
       {isDesktop ? (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 14 }}>
@@ -6091,23 +6182,9 @@ function WallDesignDetail({ design, allDesigns, onBack, isDesktop, onBookConsult
     </div>
   );
 
-  const WhyChoose = () => (
-    <div style={{ background: tokens.surfaceDefault, borderRadius: isDesktop ? 12 : 0, border: isDesktop ? `1px solid ${tokens.surfaceVariant}` : "none", padding: isDesktop ? "20px" : "20px 16px 16px" }}>
-      <div style={{ fontSize: 14, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 14 }}>Why Choose This Design</div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        {whyFeatures.map((f, i) => (
-          <div key={i} style={{ background: tokens.surfaceBg, borderRadius: 12, padding: "14px 12px", border: `1px solid ${tokens.surfaceVariant}` }}>
-            <div style={{ fontSize: 22, marginBottom: 8 }}>{f.icon}</div>
-            <div style={{ fontSize: 12, fontWeight: 700, color: tokens.onSurfaceDefault, marginBottom: 4 }}>{f.title}</div>
-            <div style={{ fontSize: 11, color: tokens.onSurfaceSecondary, lineHeight: 1.45 }}>{f.desc}</div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
 
   const InstallProcess = () => (
-    <div style={{ background: tokens.surfaceDefault, borderRadius: isDesktop ? 12 : 0, border: isDesktop ? `1px solid ${tokens.surfaceVariant}` : "none", padding: isDesktop ? "20px" : "20px 16px 20px" }}>
+    <div style={{ background: isDesktop ? "white" : "transparent", borderRadius: isDesktop ? 12 : 0, border: isDesktop ? `1px solid ${tokens.surfaceVariant}` : "none", padding: isDesktop ? "20px" : "20px 16px 20px" }}>
       <div style={{ fontSize: 14, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 20 }}>Installation Process</div>
       <div style={{ display: isDesktop ? "grid" : "block", gridTemplateColumns: isDesktop ? "1fr 1fr" : undefined, gap: isDesktop ? 20 : undefined }}>
         {INSTALL_STEPS.map((step, i) => (
@@ -6130,32 +6207,196 @@ function WallDesignDetail({ design, allDesigns, onBack, isDesktop, onBookConsult
   );
 
   const CustomerReviews = () => (
-    <div style={{ background: tokens.surfaceDefault, borderRadius: isDesktop ? 12 : 0, border: isDesktop ? `1px solid ${tokens.surfaceVariant}` : "none", padding: isDesktop ? "20px" : "20px 16px 16px" }}>
-      <div style={{ fontSize: 14, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 14 }}>Customer Reviews</div>
-      {REVIEWS.map((r, i) => (
-        <div key={i} style={{ paddingBottom: i < REVIEWS.length - 1 ? 14 : 0, borderBottom: i < REVIEWS.length - 1 ? `1px solid ${tokens.surfaceVariant}` : "none", marginBottom: i < REVIEWS.length - 1 ? 14 : 0 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: tokens.onSurfaceDefault }}>{r.name}</span>
-            <span style={{ fontSize: 13, color: "#F59E0B" }}>{"★".repeat(r.rating)}{"☆".repeat(5 - r.rating)}</span>
+    <div style={{ background: "transparent", padding: isDesktop ? "0" : "20px 16px 16px" }}>
+      <div style={{ fontSize: 14, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 16 }}>Customer Reviews</div>
+      <div style={isDesktop
+        ? { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }
+        : { display: "flex", gap: 12, overflowX: "auto", scrollbarWidth: "none", paddingBottom: 4 } as React.CSSProperties}>
+        {REVIEWS.map((r, i) => (
+          <div key={i} style={{ background: "white", border: `1px solid ${tokens.surfaceVariant}`, borderRadius: 12, padding: "18px 20px", display: "flex", flexDirection: "column", gap: 8, ...(isDesktop ? {} : { flexShrink: 0, width: 240 }) }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: tokens.onSurfaceDefault }}>{r.name}</span>
+              <span style={{ fontSize: 13, color: "#F59E0B", flexShrink: 0 }}>{"★".repeat(r.rating)}{"☆".repeat(5 - r.rating)}</span>
+            </div>
+            <p style={{ fontSize: 12, color: tokens.onSurfaceSecondary, lineHeight: 1.55, margin: 0 }}>{r.text}</p>
           </div>
-          <p style={{ fontSize: 12, color: tokens.onSurfaceSecondary, lineHeight: 1.55, margin: 0 }}>{r.text}</p>
+        ))}
+      </div>
+    </div>
+  );
+
+  const FaqSection = () => (
+    <div style={{ background: "transparent", padding: isDesktop ? "0" : "20px 16px 28px" }}>
+      <div style={{ fontSize: isDesktop ? 28 : 16, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: isDesktop ? 6 : 4 }}>Frequently Asked Questions</div>
+      <div style={{ fontSize: 12, color: tokens.onSurfaceSecondary, marginBottom: isDesktop ? 20 : 14 }}>Everything you need to know about our wall designs</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {FAQS.map((faq, i) => (
+          <div key={i} style={{ background: "#F2F2F2", border: "none", borderRadius: 10, overflow: "hidden" }}>
+            <button onClick={() => setOpenFaq(openFaq === i ? null : i)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "15px 18px", background: "transparent", border: "none", cursor: "pointer", gap: 10 }}>
+              <span style={{ fontSize: 13, fontWeight: 500, color: tokens.onSurfaceDefault, textAlign: "left", flex: 1, lineHeight: 1.4 }}>{faq.q}</span>
+              <span style={{ fontSize: 18, color: tokens.onSurfaceSecondary, flexShrink: 0, lineHeight: 1, transform: openFaq === i ? "rotate(45deg)" : "none", transition: "transform 0.2s", display: "inline-block" }}>+</span>
+            </button>
+            {openFaq === i && <div style={{ padding: "0 18px 16px", fontSize: 12, color: tokens.onSurfaceSecondary, lineHeight: 1.65 }}>{faq.a}</div>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  const KeyProperties = () => (
+    <div style={{ padding: isDesktop ? "18px 20px" : "20px 16px" }}>
+      <div style={{ fontSize: 14, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 16 }}>Key Properties</div>
+      <div style={{ display: "flex", gap: isDesktop ? 20 : 16, justifyContent: "space-around" }}>
+        {keyProps.map((p, i) => (
+          <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+            <div style={{ width: isDesktop ? 52 : 44, height: isDesktop ? 52 : 44, borderRadius: 13, background: "#C0504D", display: "flex", alignItems: "center", justifyContent: "center", fontSize: isDesktop ? 24 : 20 }}>{p.icon}</div>
+            <span style={{ fontSize: 11, fontWeight: 600, color: tokens.onSurfaceDefault, textAlign: "center", lineHeight: 1.3 }}>{p.label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  const SpecsAccordion = () => {
+    const [openSpec, setOpenSpec] = React.useState<string | null>(null);
+    const specs = [
+      { key: "specs", title: "Product Specifications", rows: [
+        ["Material", design.material], ["Finish", design.tag], ["Color Scheme", design.colorScheme],
+        ["Ideal For", idealRooms.join(", ")], ["Coverage", "14ft × 9ft (standard)"], ["Thickness", "6–12mm"],
+      ]},
+      { key: "material", title: "Material Details", rows: [
+        ["Surface", "Premium " + design.material], ["Texture", design.tag], ["Weight", "Light to Medium"],
+        ["Maintenance", "Wipe clean with dry cloth"], ["Installation", "Professional recommended"],
+      ]},
+    ];
+    return (
+      <div>
+        {specs.map(s => (
+          <div key={s.key}>
+            <button onClick={() => setOpenSpec(openSpec === s.key ? null : s.key)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "15px 20px", background: "none", border: "none", borderBottom: `1px solid ${tokens.surfaceVariant}`, cursor: "pointer" }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: tokens.onSurfaceDefault }}>{s.title}</span>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={tokens.onSurfaceSecondary} strokeWidth="2.5" style={{ transform: openSpec === s.key ? "rotate(180deg)" : "none", transition: "transform 0.2s", flexShrink: 0 }}><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            {openSpec === s.key && (
+              <div style={{ padding: "14px 20px 16px", borderBottom: `1px solid ${tokens.surfaceVariant}` }}>
+                {s.rows.map(([k, v], ri) => (
+                  <div key={ri} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "6px 0", borderBottom: ri < s.rows.length - 1 ? `1px solid ${tokens.surfaceVariant}` : "none" }}>
+                    <span style={{ color: tokens.onSurfaceSecondary }}>{k}</span>
+                    <span style={{ color: tokens.onSurfaceDefault, fontWeight: 500 }}>{v}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const AvailableOffers = () => (
+    <div style={{ padding: isDesktop ? "20px" : "20px 0 20px 16px" }}>
+      <div style={{ fontSize: 14, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 14, ...(isDesktop ? {} : { paddingRight: 16 }) }}>Available Offers</div>
+      <div style={{ display: "flex", gap: 10, overflowX: "auto", ...(isDesktop ? { flexWrap: "wrap" as any } : { paddingRight: 16 }), scrollbarWidth: "none" } as React.CSSProperties}>
+        {offers.map((o, i) => (
+          <div key={i} style={{ flexShrink: 0, width: isDesktop ? "calc(33% - 8px)" : 170, background: o.color, border: `1px solid ${o.border}`, borderRadius: 10, padding: "12px 14px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+              <span style={{ fontSize: 9, fontWeight: 700, background: o.text, color: "white", borderRadius: 4, padding: "2px 6px" }}>{o.tag}</span>
+              <span style={{ fontSize: 14, fontWeight: 800, color: o.text }}>{o.title}</span>
+            </div>
+            <div style={{ fontSize: 11, color: tokens.onSurfaceSecondary, marginBottom: 8, lineHeight: 1.35 }}>{o.desc}</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "white", border: `1px dashed ${o.border}`, borderRadius: 6, padding: "5px 10px" }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: o.text, letterSpacing: "0.05em" }}>{o.code}</span>
+              <button style={{ fontSize: 10, fontWeight: 700, color: o.text, background: "none", border: "none", cursor: "pointer", padding: 0 }}>COPY</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  const TrustBadges = () => (
+    <div style={{ display: "flex", gap: 8, padding: isDesktop ? "14px 0 0" : "14px 16px 12px", background: isDesktop ? "transparent" : tokens.surfaceDefault, flexWrap: "wrap" as any }}>
+      {[
+        { icon: "⚡", text: "Quick Install" },
+        { icon: "🛡️", text: "2yr Warranty" },
+        { icon: "✓", text: "Free Site Visit" },
+      ].map((b, i) => (
+        <div key={i} style={{ display: "flex", alignItems: "center", gap: 5, background: "#F0FAF0", border: "1px solid #C8E6C9", borderRadius: 20, padding: "5px 12px" }}>
+          <span style={{ fontSize: 13 }}>{b.icon}</span>
+          <span style={{ fontSize: 11, fontWeight: 600, color: "#2E7D32" }}>{b.text}</span>
         </div>
       ))}
     </div>
   );
 
-  const FaqSection = () => (
-    <div style={{ background: tokens.surfaceDefault, borderRadius: isDesktop ? 12 : 0, border: isDesktop ? `1px solid ${tokens.surfaceVariant}` : "none", padding: isDesktop ? "20px" : "20px 16px 28px" }}>
-      <div style={{ fontSize: 14, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 14 }}>Frequently Asked Questions</div>
-      {FAQS.map((faq, i) => (
-        <div key={i} style={{ borderBottom: `1px solid ${tokens.surfaceVariant}` }}>
-          <button onClick={() => setOpenFaq(openFaq === i ? null : i)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 0", background: "none", border: "none", cursor: "pointer", gap: 10 }}>
-            <span style={{ fontSize: 13, fontWeight: 500, color: tokens.onSurfaceDefault, textAlign: "left", flex: 1, lineHeight: 1.4 }}>{faq.q}</span>
-            <span style={{ fontSize: 14, color: tokens.onSurfaceSecondary, transform: openFaq === i ? "rotate(180deg)" : "none", transition: "transform 0.2s", flexShrink: 0, display: "inline-block" }}>⌄</span>
-          </button>
-          {openFaq === i && <div style={{ paddingBottom: 14, fontSize: 12, color: tokens.onSurfaceSecondary, lineHeight: 1.6 }}>{faq.a}</div>}
-        </div>
+  const IdealFor = () => (
+    <div style={{ padding: isDesktop ? "0" : "0 16px 14px", background: isDesktop ? "transparent" : tokens.surfaceDefault }}>
+      <span style={{ fontSize: 12, color: tokens.onSurfaceSecondary, marginRight: 8 }}>Ideal for</span>
+      {idealRooms.map((r, i) => (
+        <span key={i} style={{ display: "inline-block", padding: "3px 10px", background: tokens.surfaceBg, border: `1px solid ${tokens.surfaceVariant}`, borderRadius: 20, fontSize: 11, color: tokens.onSurfaceDefault, fontWeight: 500, marginRight: 6 }}>{r}</span>
       ))}
+    </div>
+  );
+
+  const WHY_ITEMS = [
+    { icon: "⏱️", title: "60 Minute Delivery",    desc: "Get your order delivered within an hour" },
+    { icon: "👥", title: "50,000+",               desc: "Customers served" },
+    { icon: "😊", title: "99%",                   desc: "Satisfaction rate" },
+    { icon: "✅", title: "Livspace Assured",       desc: "Quality guaranteed by trusted experts" },
+    { icon: "🔧", title: "Installation Services", desc: "Professional installation available" },
+  ];
+
+  const WhyLivspace = () => (
+    <div style={{ background: "transparent", borderRadius: 0, border: "none", padding: isDesktop ? "0" : "24px 16px" }}>
+      <div style={{ fontSize: isDesktop ? 22 : 16, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: isDesktop ? 28 : 20 }}>Why Choose Livspace</div>
+
+      {/* Icons row (desktop) / list (mobile) */}
+      {isDesktop ? (
+        <div style={{ display: "flex", gap: 0, justifyContent: "space-between", marginBottom: 28 }}>
+          {WHY_ITEMS.map((item, i) => (
+            <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", padding: "0 12px" }}>
+              <div style={{ width: 60, height: 60, borderRadius: 14, background: "#C0504D", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 26, marginBottom: 14, flexShrink: 0 }}>{item.icon}</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: tokens.onSurfaceDefault, marginBottom: 5, lineHeight: 1.3 }}>{item.title}</div>
+              <div style={{ fontSize: 11, color: tokens.onSurfaceSecondary, lineHeight: 1.5 }}>{item.desc}</div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 0, marginBottom: 20 }}>
+          {WHY_ITEMS.map((item, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 14, paddingBottom: i < WHY_ITEMS.length - 1 ? 16 : 0, marginBottom: i < WHY_ITEMS.length - 1 ? 16 : 0, borderBottom: i < WHY_ITEMS.length - 1 ? `1px solid ${tokens.surfaceVariant}` : "none" }}>
+              <div style={{ width: 48, height: 48, borderRadius: 12, background: "#C0504D", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, flexShrink: 0 }}>{item.icon}</div>
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: tokens.onSurfaceDefault, marginBottom: 2 }}>{item.title}</div>
+                <div style={{ fontSize: 12, color: tokens.onSurfaceSecondary }}>{item.desc}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Bottom: Summary + Google rating */}
+      <div style={{ display: isDesktop ? "grid" : "flex", gridTemplateColumns: isDesktop ? "1fr 1fr" : undefined, flexDirection: isDesktop ? undefined : "column" as any, gap: 16 }}>
+        {/* Summary card */}
+        <div style={{ background: "white", border: `1px solid ${tokens.surfaceVariant}`, borderRadius: 12, padding: "18px 20px" }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: tokens.onSurfaceDefault, marginBottom: 10 }}>Summary</div>
+          <div style={{ fontSize: 12, color: tokens.onSurfaceSecondary, lineHeight: 1.7, marginBottom: 16 }}>Customers frequently commend our swift delivery and the attentive nature of our service, which clearly reflects their overall satisfaction. They often express a strong inclination to recommend us to their friends and family. Additionally, many customers are enthusiastic about returning.</div>
+          <div style={{ borderTop: `1px solid ${tokens.surfaceVariant}`, paddingTop: 10, fontSize: 11, color: tokens.onSurfaceSecondary, fontStyle: "italic" }}>Generated by Livspace AI</div>
+        </div>
+        {/* Google rating card */}
+        <div style={{ background: "white", border: `1px solid ${tokens.surfaceVariant}`, borderRadius: 12, padding: "18px 20px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: tokens.onSurfaceSecondary }}>Average Ratings</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            {/* Google G */}
+            <svg width="42" height="42" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.36 17.77 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/><path fill="none" d="M0 0h48v48H0z"/></svg>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: 32, fontWeight: 800, color: tokens.onSurfaceDefault, lineHeight: 1 }}>4.7</div>
+              <div style={{ fontSize: 18, color: "#F59E0B", margin: "4px 0" }}>★★★★<span style={{ color: "#D0D0D0" }}>★</span></div>
+              <div style={{ fontSize: 13, color: tokens.onSurfaceSecondary }}>3,640 reviews</div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 
@@ -6171,17 +6412,17 @@ function WallDesignDetail({ design, allDesigns, onBack, isDesktop, onBookConsult
             <div style={{ fontSize: 18, fontWeight: 700, fontFamily: "var(--font-gilroy)", color: tokens.onSurfaceDefault }}>{design.name}</div>
             <div style={{ fontSize: 11, color: tokens.onSurfaceSecondary }}>✨ Elevate · Wall Designs</div>
           </div>
-          <button onClick={openBooking} style={{ height: 40, padding: "0 24px", background: tokens.primaryDefault, border: "none", borderRadius: 12, fontFamily: "var(--font-gilroy)", fontSize: 14, fontWeight: 700, color: "white", cursor: "pointer" }}>
-            Book Consultation · ₹99
-          </button>
         </div>
 
         {/* Body */}
-        <div style={{ flex: 1, overflowY: "auto" }}>
-          <div style={{ maxWidth: 1200, margin: "0 auto", padding: "32px 40px 60px" }}>
+        <div style={{ flex: 1, overflowY: "auto", background: "#F5F5F5" }}>
+
+          {/* ── White hero band ── */}
+          <div style={{ background: "white" }}>
+            <div style={{ maxWidth: 1200, margin: "0 auto", padding: "32px 40px 40px" }}>
 
             {/* Top 2-col: image + right panel */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 440px", gap: 32, marginBottom: 32 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 440px", gap: 32 }}>
               {/* Left: hero image gallery */}
               <div>
                 <ImageGallery thumbsBelow />
@@ -6192,39 +6433,107 @@ function WallDesignDetail({ design, allDesigns, onBack, isDesktop, onBookConsult
                 </div>
               </div>
 
-              {/* Right: details panel */}
-              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                {/* Name + price */}
-                <div style={{ background: tokens.surfaceDefault, borderRadius: 12, border: `1px solid ${tokens.surfaceVariant}`, padding: "20px" }}>
-                  <div style={{ fontSize: 24, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 6 }}>{design.name}</div>
-                  <div style={{ fontSize: 22, fontWeight: 700, color: tokens.primaryDefault, marginBottom: 4 }}>₹{design.price.toLocaleString("en-IN")}</div>
-                  <div style={{ fontSize: 12, color: tokens.onSurfaceSecondary }}>Starts at ₹{design.price.toLocaleString("en-IN")} for 14ft × 9ft · Add-ons extra</div>
-                  <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-                    <span style={{ padding: "4px 10px", borderRadius: 6, background: tokens.surfaceBg, border: `1px solid ${tokens.surfaceVariant}`, fontSize: 11, color: tokens.onSurfaceSecondary }}>{design.tag}</span>
-                    <span style={{ padding: "4px 10px", borderRadius: 6, background: tokens.surfaceBg, border: `1px solid ${tokens.surfaceVariant}`, fontSize: 11, color: tokens.onSurfaceSecondary }}>{design.material}</span>
-                    <span style={{ padding: "4px 10px", borderRadius: 6, background: tokens.surfaceBg, border: `1px solid ${tokens.surfaceVariant}`, fontSize: 11, color: tokens.onSurfaceSecondary }}>{design.colorScheme}</span>
+              {/* Right: single continuous details panel */}
+              <div style={{ background: "transparent", alignSelf: "start" }}>
+                {/* 1. Name + price */}
+                <div style={{ padding: "20px 20px 16px" }}>
+                  <div style={{ fontSize: 22, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 6 }}>{design.name}</div>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 2 }}>
+                    <span style={{ fontSize: 20, fontWeight: 700, color: tokens.primaryDefault }}>₹{design.price.toLocaleString("en-IN")}</span>
+                    <span style={{ fontSize: 13, color: tokens.onSurfaceSecondary, textDecoration: "line-through" }}>₹{Math.round(design.price * 1.25).toLocaleString("en-IN")}</span>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: "#2E7D32", background: "#E8F5E9", borderRadius: 4, padding: "2px 7px" }}>20% OFF</span>
                   </div>
+                  <div style={{ fontSize: 11, color: tokens.onSurfaceSecondary, marginBottom: 14 }}>Starts at ₹{design.price.toLocaleString("en-IN")} for 14ft × 9ft · Add-ons extra</div>
+
+                  {/* 2. Calculate how much you need */}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: `1px solid ${tokens.surfaceVariant}` }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 16 }}>📐</span>
+                      <span style={{ fontSize: 13, color: tokens.onSurfaceDefault, fontWeight: 500 }}>Calculate how much you need</span>
+                    </div>
+                    <span style={{ fontSize: 14, color: tokens.onSurfaceSecondary }}>›</span>
+                  </div>
+
+                  {/* 3. Deliver to */}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", marginBottom: 14 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 16 }}>📍</span>
+                      <span style={{ fontSize: 13, color: tokens.onSurfaceDefault }}>Deliver to <span style={{ fontWeight: 600 }}>Bengaluru</span></span>
+                    </div>
+                    <span style={{ fontSize: 12, color: tokens.primaryDefault, fontWeight: 600, cursor: "pointer" }}>Change</span>
+                  </div>
+
+                  {/* 4. Ideal For */}
+                  <IdealFor />
+
+                  {/* 5. CTA button */}
+                  <button onClick={openBooking} style={{ width: "100%", height: 46, background: tokens.primaryDefault, border: "none", borderRadius: 10, fontFamily: "var(--font-gilroy)", fontSize: 14, fontWeight: 700, color: "white", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, margin: "14px 0 12px" }}>
+                    <span>🗓️</span> Book Consultation · ₹99
+                  </button>
+
+                  {/* 6. Trust badges */}
+                  <TrustBadges />
                 </div>
 
-                {/* Cost breakdown */}
+                {/* 7. Cost Breakdown */}
+                <div style={{ borderTop: `1px solid ${tokens.surfaceVariant}` }} />
                 <CostBreakdown />
 
-                {/* Products row */}
+                {/* 8. Available Offers */}
+                <div style={{ borderTop: `1px solid ${tokens.surfaceVariant}` }} />
+                <AvailableOffers />
+
+                {/* 9. Key Properties */}
+                <div style={{ borderTop: `1px solid ${tokens.surfaceVariant}` }} />
+                <KeyProperties />
+
+                {/* 10. Specs Accordion */}
+                <div style={{ borderTop: `1px solid ${tokens.surfaceVariant}` }} />
+                <SpecsAccordion />
+
+                {/* 11. Products & accessories */}
+                <div style={{ borderTop: `1px solid ${tokens.surfaceVariant}` }} />
                 <ProductsRow />
               </div>
             </div>
+            </div>{/* end maxWidth */}
+          </div>{/* end white hero band */}
 
-            {/* Similar looks — full width */}
-            <div style={{ marginBottom: 24 }}><SimilarLooks /></div>
+          {/* ── Gray section: Similar looks ── */}
+          <div style={{ background: "#F5F5F5", padding: "32px 0" }}>
+            <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 40px" }}>
+              <SimilarLooks />
+            </div>
+          </div>
 
-            {/* Bottom full-width sections in 2-col grid */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, marginBottom: 24 }}>
-              <WhyChoose />
+          {/* ── Install Process ── */}
+          <div style={{ background: "#EDEEF7", padding: "32px 0" }}>
+            <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 40px" }}>
+              <InstallProcess />
+            </div>
+          </div>
+
+          {/* ── Customer Reviews ── */}
+          <div style={{ background: "white", padding: "32px 0" }}>
+            <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 40px" }}>
               <CustomerReviews />
             </div>
-            <div style={{ marginBottom: 24 }}><InstallProcess /></div>
-            <FaqSection />
           </div>
+
+          {/* ── Gray section: Why Choose Livspace (full-bleed, no card border) ── */}
+          <div style={{ background: "#F5F5F5", padding: "40px 0" }}>
+            <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 40px" }}>
+              <WhyLivspace />
+            </div>
+          </div>
+
+          {/* ── FAQ ── */}
+          <div style={{ background: "white", padding: "40px 0 60px" }}>
+            <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 40px" }}>
+              <FaqSection />
+            </div>
+          </div>
+
         </div>
       </div>
     );
@@ -6249,29 +6558,55 @@ function WallDesignDetail({ design, allDesigns, onBack, isDesktop, onBookConsult
         {/* Hero image gallery */}
         <ImageGallery />
 
-        {/* Name + starts at */}
-        <div style={{ padding: "16px 16px 12px", background: tokens.surfaceDefault }}>
+        {/* White: Name + price + IdealFor + TrustBadges */}
+        <div style={{ padding: "16px 16px 0", background: "white" }}>
           <div style={{ fontSize: 20, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 4 }}>{design.name}</div>
-          <div style={{ fontSize: 22, fontWeight: 700, color: tokens.primaryDefault, marginBottom: 4 }}>₹{design.price.toLocaleString("en-IN")}</div>
-          <div style={{ fontSize: 12, color: tokens.onSurfaceSecondary }}>Starts at ₹{design.price.toLocaleString("en-IN")} for 14ft × 9ft</div>
-          <div style={{ fontSize: 11, color: tokens.onSurfaceSecondary, fontStyle: "italic", marginTop: 2 }}>Add-ons cost extra</div>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 2 }}>
+            <span style={{ fontSize: 22, fontWeight: 700, color: tokens.primaryDefault }}>₹{design.price.toLocaleString("en-IN")}</span>
+            <span style={{ fontSize: 13, color: tokens.onSurfaceSecondary, textDecoration: "line-through" }}>₹{Math.round(design.price * 1.25).toLocaleString("en-IN")}</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "#2E7D32", background: "#E8F5E9", borderRadius: 4, padding: "2px 6px" }}>20% OFF</span>
+          </div>
+          <div style={{ fontSize: 12, color: tokens.onSurfaceSecondary, marginBottom: 12 }}>Starts at ₹{design.price.toLocaleString("en-IN")} for 14ft × 9ft · Add-ons extra</div>
+          <IdealFor />
+          <TrustBadges />
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+        {/* White: Cost breakdown + Offers + Products + Info note + Specs + Key Props */}
+        <div style={{ background: "white" }}>
           <CostBreakdown />
+          <AvailableOffers />
           <ProductsRow />
-
-          {/* Info note */}
-          <div style={{ margin: "0 16px", padding: "10px 12px", background: tokens.extendedBlue, borderRadius: 10, display: "flex", gap: 8, alignItems: "flex-start" }}>
+          <div style={{ margin: "0 16px 16px", padding: "10px 12px", background: tokens.extendedBlue, borderRadius: 10, display: "flex", gap: 8, alignItems: "flex-start" }}>
             <span style={{ fontSize: 14, flexShrink: 0 }}>ℹ️</span>
             <span style={{ fontSize: 11, color: tokens.onSurfaceSecondary, lineHeight: 1.5 }}>Price covers just the wall panels area, not the entire wall</span>
           </div>
+          <SpecsAccordion />
+          <KeyProperties />
+        </div>
 
-          <div style={{ marginTop: 7 }}><SimilarLooks /></div>
-          <div style={{ marginTop: 7 }}><WhyChoose /></div>
-          <div style={{ marginTop: 1 }}><InstallProcess /></div>
-          <div style={{ marginTop: 1 }}><CustomerReviews /></div>
-          <div style={{ marginTop: 1 }}><FaqSection /></div>
+        {/* Gray: Similar Looks */}
+        <div style={{ background: "#F5F5F5" }}>
+          <SimilarLooks />
+        </div>
+
+        {/* #EDEEF7: Installation Process */}
+        <div style={{ background: "#EDEEF7" }}>
+          <InstallProcess />
+        </div>
+
+        {/* White: Customer Reviews */}
+        <div style={{ background: "white" }}>
+          <CustomerReviews />
+        </div>
+
+        {/* Gray: Why Choose Livspace */}
+        <div style={{ background: "#F5F5F5" }}>
+          <WhyLivspace />
+        </div>
+
+        {/* White: FAQ */}
+        <div style={{ background: "white" }}>
+          <FaqSection />
         </div>
 
       </div>
@@ -6468,35 +6803,167 @@ function ElevateScreen({ goBack, cartCount, isDesktop, initialRoom, onBookConsul
   const WallCard = ({ d }: { d: WallDesign }) => {
     const isFav = wishlisted.has(d.id);
     const roomLabel = ELEVATE_ROOMS.find(r => r.slug === d.room)?.name ?? d.room;
+    const origPrice = Math.round(d.price * 1.25);
+    const sqftPrice = Math.round(d.price / 126);
+    const badgeStyle: Record<string, React.CSSProperties> = {
+      NEW:  { background: tokens.primaryDefault, color: "white" },
+      PICK: { background: "#5B2D8E", color: "white" },
+    };
     return (
-      <div onClick={() => setSelectedWallDesign(d)} style={{ background: tokens.surfaceDefault, borderRadius: 14, overflow: "hidden", border: `1px solid ${tokens.surfaceVariant}`, cursor: "pointer", marginBottom: 2 }}>
-        <div style={{ width: "100%", aspectRatio: "4/3", position: "relative", overflow: "hidden", background: "linear-gradient(135deg,#E8D8C4,#D4C0A8)" }}>
+      <div onClick={() => setSelectedWallDesign(d)} style={{ background: "transparent", borderRadius: 14, overflow: "hidden", border: "none", cursor: "pointer", display: "flex", flexDirection: "column" }}>
+        <div style={{ width: "100%", aspectRatio: "4/3", position: "relative", overflow: "hidden", borderRadius: 14, background: "linear-gradient(135deg,#E8D8C4,#D4C0A8)", flexShrink: 0 }}>
           <img src={d.img} alt={d.name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
           {d.badge && (
-            <div style={{ position: "absolute", top: 8, left: 8, padding: "3px 8px", borderRadius: 6, fontSize: 9, fontWeight: 700, letterSpacing: "0.06em", background: d.badge === "PICK" ? tokens.extendedMustard : tokens.primaryDefault, color: d.badge === "PICK" ? tokens.onSurfaceDefault : "white" }}>
-              {d.badge}
+            <div style={{ position: "absolute", top: 10, left: 10, padding: "4px 10px", borderRadius: 20, fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", ...(badgeStyle[d.badge] ?? badgeStyle.NEW) }}>
+              {d.badge === "PICK" ? "Top Pick" : d.badge}
             </div>
           )}
-          <button onClick={e => { e.stopPropagation(); toggleWishlist(d.id); }} style={{ position: "absolute", top: 7, right: 7, width: 28, height: 28, background: isFav ? tokens.primaryDefault : "rgba(255,255,255,0.9)", border: "none", borderRadius: "50%", cursor: "pointer", fontSize: 12, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            {isFav ? "❤️" : "🤍"}
+          <button onClick={e => { e.stopPropagation(); toggleWishlist(d.id); }} style={{ position: "absolute", top: 8, right: 8, width: 32, height: 32, background: isFav ? tokens.primaryDefault : "rgba(255,255,255,0.92)", border: isFav ? "none" : "1.5px solid #DDD", borderRadius: "50%", cursor: "pointer", fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 1px 4px rgba(0,0,0,0.12)" }}>
+            {isFav ? "❤️" : "♡"}
           </button>
         </div>
-        <div style={{ padding: "9px 11px 11px" }}>
-          <div style={{ fontSize: 9, fontWeight: 600, color: tokens.onSurfaceSecondary, textTransform: "uppercase" as const, letterSpacing: "0.07em", marginBottom: 2 }}>{roomLabel}</div>
-          <div style={{ fontSize: 12, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", lineHeight: 1.3, marginBottom: 3 }}>{d.name}</div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: tokens.primaryDefault }}>₹{d.price.toLocaleString("en-IN")}</div>
+        <div style={{ padding: "10px 2px 14px", flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
+          <div style={{ fontSize: 10, color: tokens.onSurfaceSecondary, letterSpacing: "0.04em" }}>{roomLabel}</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", lineHeight: 1.3 }}>{d.name}</div>
+          <div style={{ fontSize: 11, color: tokens.onSurfaceSecondary }}>{d.tag}, {d.material}, {d.colorScheme}</div>
+          <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" as const }}>
+            <span style={{ fontSize: 14, fontWeight: 700, color: tokens.primaryDefault }}>₹{d.price.toLocaleString("en-IN")}</span>
+            <span style={{ fontSize: 12, color: tokens.onSurfaceSecondary, textDecoration: "line-through" }}>₹{origPrice.toLocaleString("en-IN")}</span>
+            <span style={{ fontSize: 10, fontWeight: 700, color: "#2E7D32" }}>(20% OFF)</span>
+          </div>
+          <div style={{ fontSize: 11, color: tokens.onSurfaceSecondary }}>₹{sqftPrice.toLocaleString("en-IN")}/sqft</div>
         </div>
       </div>
     );
   };
 
+  /* ── Desktop filter sidebar (left) ── */
+  const DesktopFilters = () => {
+    const section = (title: string, content: React.ReactNode) => (
+      <div style={{ borderBottom: `1px solid ${tokens.surfaceVariant}`, paddingBottom: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: tokens.onSurfaceDefault, marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          {title}
+          <span style={{ fontSize: 16, color: tokens.onSurfaceSecondary, lineHeight: 1 }}>−</span>
+        </div>
+        {content}
+      </div>
+    );
+    return (
+      <div style={{ width: 276, flexShrink: 0, background: "white", overflowY: "auto", padding: "24px 20px 40px 0", display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingBottom: 12, borderBottom: `1px solid ${tokens.surfaceVariant}` }}>
+          <span style={{ fontFamily: "var(--font-gilroy)", fontSize: 15, fontWeight: 700, color: tokens.onSurfaceDefault }}>Filters</span>
+          {hasActiveFilters && (
+            <button onClick={clearFilters} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 11, color: tokens.primaryDefault, fontWeight: 600, padding: 0 }}>Clear all</button>
+          )}
+        </div>
+        {section("Budget Range",
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {WALL_BUDGET_TIERS.map(t => (
+              <label key={t.label} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 12, color: tokens.onSurfaceDefault }}>
+                <input type="checkbox" checked={filterBudget === t.label} onChange={() => setFilterBudget(filterBudget === t.label ? "" : t.label)} style={{ accentColor: tokens.primaryDefault, width: 14, height: 14 }} />
+                {t.label}
+              </label>
+            ))}
+          </div>
+        )}
+        {section("Style",
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {ELEVATE_STYLE_OPTIONS.map(s => (
+              <label key={s} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 12, color: tokens.onSurfaceDefault }}>
+                <input type="checkbox" checked={filterStyles.includes(s)} onChange={() => setFilterStyles(filterStyles.includes(s) ? filterStyles.filter(x => x !== s) : [...filterStyles, s])} style={{ accentColor: tokens.primaryDefault, width: 14, height: 14 }} />
+                {s}
+              </label>
+            ))}
+          </div>
+        )}
+        {section("Color Scheme",
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {ELEVATE_COLOR_OPTIONS.map(c => (
+              <label key={c} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 12, color: tokens.onSurfaceDefault }}>
+                <input type="checkbox" checked={filterColors.includes(c)} onChange={() => setFilterColors(filterColors.includes(c) ? filterColors.filter(x => x !== c) : [...filterColors, c])} style={{ accentColor: tokens.primaryDefault, width: 14, height: 14 }} />
+                {WALL_COLOR_SWATCHES[c] && <span style={{ width: 12, height: 12, borderRadius: "50%", background: WALL_COLOR_SWATCHES[c], border: "1px solid #DDD", flexShrink: 0 }} />}
+                {c}
+              </label>
+            ))}
+          </div>
+        )}
+        {section("Material",
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {ELEVATE_MATERIAL_OPTIONS.map(m => (
+              <label key={m} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 12, color: tokens.onSurfaceDefault }}>
+                <input type="checkbox" checked={filterMaterials.includes(m)} onChange={() => setFilterMaterials(filterMaterials.includes(m) ? filterMaterials.filter(x => x !== m) : [...filterMaterials, m])} style={{ accentColor: tokens.primaryDefault, width: 14, height: 14 }} />
+                {m}
+              </label>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  /* ── Installation video scroll section ── */
+  const INSTALL_VIDEOS = [
+    { img: "https://images.unsplash.com/photo-1504307651254-35680f356dfd?w=400&q=80", label: "Surface Prep" },
+    { img: "https://images.unsplash.com/photo-1590856029826-c7a73142bbf1?w=400&q=80", label: "Panel Fitting" },
+    { img: "https://images.unsplash.com/photo-1621905252507-b35492cc74b4?w=400&q=80", label: "Grouting & Finish" },
+    { img: "https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400&q=80", label: "Final Reveal" },
+    { img: "https://images.unsplash.com/photo-1581578731548-c64695cc6952?w=400&q=80", label: "Quality Check" },
+    { img: "https://images.unsplash.com/photo-1600210492493-0946911123ea?w=400&q=80", label: "Complete Look" },
+  ];
+
+  const VideoScrollSection = () => (
+    <div style={{ margin: "28px -52px 28px -52px", background: "#3A2640", padding: "36px 52px 40px" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
+        <div style={{ fontFamily: "var(--font-gilroy)", fontSize: 26, fontWeight: 700, color: "white", lineHeight: 1.25 }}>
+          Your wall, transformed —<br />watch it happen
+        </div>
+        <button style={{ background: "none", border: "1.5px solid rgba(255,255,255,0.5)", borderRadius: 24, padding: "8px 20px", fontSize: 13, fontWeight: 600, color: "white", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" as const }}>
+          Watch More <span style={{ fontSize: 15 }}>›</span>
+        </button>
+      </div>
+      <div style={{ display: "flex", gap: 14, overflowX: "auto", scrollbarWidth: "none", paddingBottom: 4 } as React.CSSProperties}>
+        {INSTALL_VIDEOS.map((v, i) => (
+          <div key={i} style={{ flexShrink: 0, width: 210, borderRadius: 16, overflow: "hidden", position: "relative", cursor: "pointer" }}>
+            <div style={{ width: "100%", aspectRatio: "9/14", background: "#1E1428", position: "relative", overflow: "hidden" }}>
+              <img src={v.img} alt={v.label} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", opacity: 0.88 }} onError={e => { (e.target as HTMLImageElement).style.opacity = "0"; }} />
+              {/* Play button */}
+              <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <div style={{ width: 40, height: 40, borderRadius: "50%", background: "rgba(255,255,255,0.22)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", border: "1.5px solid rgba(255,255,255,0.4)" }}>
+                  <span style={{ fontSize: 16, color: "white", marginLeft: 3 }}>▶</span>
+                </div>
+              </div>
+              {/* Label overlay at bottom */}
+              <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "28px 14px 14px", background: "linear-gradient(to top, rgba(0,0,0,0.72) 0%, transparent 100%)" }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: "white" }}>{v.label}</span>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  /* ── Promo banner ── */
+  const PromoBanner = () => (
+    <div style={{ borderRadius: 14, overflow: "hidden", background: "linear-gradient(105deg, #3D2C1E 0%, #7B3F1A 60%, #C0504D 100%)", padding: "22px 32px", display: "flex", alignItems: "center", justifyContent: "space-between", margin: "20px 0" }}>
+      <div>
+        <div style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.7)", letterSpacing: "0.08em", textTransform: "uppercase" as const, marginBottom: 6 }}>Wall Designs · Limited Offer</div>
+        <div style={{ fontFamily: "var(--font-gilroy)", fontSize: 22, fontWeight: 800, color: "white", lineHeight: 1.2 }}>Book a consult for ₹99</div>
+        <div style={{ fontFamily: "var(--font-gilroy)", fontSize: 22, fontWeight: 800, color: "#FFD580", lineHeight: 1.2 }}>get <span style={{ fontSize: 28 }}>15% off</span></div>
+      </div>
+      <button style={{ background: "white", border: "none", borderRadius: 10, padding: "10px 22px", fontFamily: "var(--font-gilroy)", fontSize: 13, fontWeight: 700, color: "#3D2C1E", cursor: "pointer", whiteSpace: "nowrap" as const }}>Book Now →</button>
+    </div>
+  );
+
   /* ── Desktop layout ── */
   if (isDesktop) {
+    const firstBatch = filtered.slice(0, 6);
+    const restBatch  = filtered.slice(6);
     return (
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", background: tokens.surfaceBg, overflow: "hidden" }}>
-        {showFilters && <FilterSheet />}
-        <div style={{ background: tokens.surfaceDefault, borderBottom: `1px solid ${tokens.surfaceVariant}`, padding: "0 40px", flexShrink: 0 }}>
-          <div style={{ maxWidth: 1280, margin: "0 auto", height: 64, display: "flex", alignItems: "center", gap: 20 }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", background: "white", overflow: "hidden" }}>
+        {/* Header */}
+        <div style={{ background: "white", borderBottom: `1px solid ${tokens.surfaceVariant}`, flexShrink: 0 }}>
+          <div style={{ height: 64, display: "flex", alignItems: "center", padding: "0 80px", gap: 20 }}>
             <button onClick={goBack} style={{ width: 36, height: 36, borderRadius: "50%", background: tokens.surfaceBg, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, color: tokens.onSurfaceDefault, flexShrink: 0 }}>←</button>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 20, fontWeight: 700, fontFamily: "var(--font-gilroy)", color: tokens.onSurfaceDefault }}>✨ Elevate</div>
@@ -6504,25 +6971,75 @@ function ElevateScreen({ goBack, cartCount, isDesktop, initialRoom, onBookConsul
             </div>
           </div>
         </div>
-        <div style={{ flex: 1, overflowY: "auto", padding: "24px 40px 40px" }}>
-          <div style={{ maxWidth: 1280, margin: "0 auto" }}>
-            <div style={{ display: "flex", gap: 10, marginBottom: 24, flexWrap: "wrap" }}>
-              {ELEVATE_ROOMS.map(r => <RoomTile key={r.slug} room={r} />)}
-            </div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
-              <div style={{ fontSize: 20, fontWeight: 700, fontFamily: "var(--font-gilroy)", color: tokens.onSurfaceDefault }}>{sectionTitle}</div>
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <span style={{ fontSize: 13, color: tokens.onSurfaceSecondary }}>{filtered.length} result{filtered.length !== 1 ? "s" : ""}</span>
-                <FiltersBtn />
+
+        {/* Full-width room category tiles row */}
+        <div style={{ background: "white", borderBottom: `1px solid ${tokens.surfaceVariant}`, flexShrink: 0, padding: "16px 80px" }}>
+          <div style={{ display: "flex", gap: 12, overflowX: "auto", scrollbarWidth: "none" } as React.CSSProperties}>
+            {ELEVATE_ROOMS.map(r => <RoomTile key={r.slug} room={r} />)}
+          </div>
+        </div>
+
+        {/* Body: left filters + main content */}
+        <div style={{ flex: 1, display: "flex", overflow: "hidden", paddingLeft: 80 }}>
+          <DesktopFilters />
+
+          {/* Main scrollable area */}
+          <div style={{ flex: 1, overflowY: "auto", padding: "24px 80px 48px 52px" }}>
+
+            {/* Sort bar */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18, paddingBottom: 14, borderBottom: `1px solid ${tokens.surfaceVariant}` }}>
+              <div style={{ fontSize: 18, fontWeight: 700, fontFamily: "var(--font-gilroy)", color: tokens.onSurfaceDefault }}>{sectionTitle} <span style={{ fontSize: 12, fontWeight: 400, color: tokens.onSurfaceSecondary, marginLeft: 6 }}>({filtered.length} results)</span></div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 12, color: tokens.onSurfaceSecondary }}>Sort by:</span>
+                <select style={{ fontSize: 12, fontWeight: 600, color: tokens.onSurfaceDefault, border: `1px solid ${tokens.surfaceVariant}`, borderRadius: 8, padding: "5px 10px", background: tokens.surfaceDefault, cursor: "pointer", outline: "none" }}>
+                  <option>Popularity</option>
+                  <option>Price: Low to High</option>
+                  <option>Price: High to Low</option>
+                  <option>Newest First</option>
+                </select>
               </div>
             </div>
+
             {filtered.length === 0 ? (
               <div style={{ textAlign: "center", padding: "60px 0", color: tokens.onSurfaceSecondary, fontSize: 14 }}>No wall designs match your filters — try clearing some.</div>
             ) : (
-              <ResponsiveMasonry columnsCountBreakPoints={{ 0: 2, 640: 3, 1024: 4 }}>
-                <Masonry gutter="16px">{filtered.map(d => <WallCard key={d.id} d={d} />)}</Masonry>
-              </ResponsiveMasonry>
+              <>
+                {/* First 6 cards */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 296px)", gap: 20 }}>
+                  {firstBatch.map(d => <WallCard key={d.id} d={d} />)}
+                </div>
+
+                {/* Installation video scroll section after row 2 */}
+                {filtered.length > 3 && <VideoScrollSection />}
+
+                {/* Remaining cards */}
+                {restBatch.length > 0 && (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 296px)", gap: 20 }}>
+                    {restBatch.map(d => <WallCard key={d.id} d={d} />)}
+                  </div>
+                )}
+              </>
             )}
+
+            {/* You may also like — horizontal scroll */}
+            {filtered.length > 0 && (
+              <div style={{ marginTop: 40 }}>
+                <div style={{ fontSize: 18, fontWeight: 700, fontFamily: "var(--font-gilroy)", color: tokens.onSurfaceDefault, marginBottom: 16 }}>You May Also Like</div>
+                <div style={{ display: "flex", gap: 16, overflowX: "auto", scrollbarWidth: "none", paddingBottom: 8 } as React.CSSProperties}>
+                  {WALL_DESIGNS.filter(d => !filtered.find(f => f.id === d.id)).slice(0, 6).map(d => (
+                    <div key={d.id} onClick={() => setSelectedWallDesign(d)} style={{ flexShrink: 0, width: 180, cursor: "pointer" }}>
+                      <div style={{ width: "100%", height: 130, borderRadius: 12, overflow: "hidden", background: "#E8E0D8", marginBottom: 8 }}>
+                        <img src={d.img} alt={d.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                      </div>
+                      <div style={{ fontSize: 10, color: tokens.onSurfaceSecondary }}>{ELEVATE_ROOMS.find(r => r.slug === d.room)?.name ?? d.room}</div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", lineHeight: 1.3, marginBottom: 3 }}>{d.name}</div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: tokens.primaryDefault }}>₹{d.price.toLocaleString("en-IN")}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
           </div>
         </div>
       </div>
@@ -6790,7 +7307,7 @@ function MyAccountScreen({ goTo, goBack, orders, wishlistCount, isDesktop }: { g
 /* ─────────────────────────────────────────────────────
    CONSULTATION STAGES
 ───────────────────────────────────────────────────── */
-type ConsultStage = "scheduled"|"partner_assigned"|"partner_on_way"|"partner_reached"|"consultation_done"|"boq_shared"|"payment_made"|"delivery_booked"|"installation_booked"|"delivered"|"install_partner_assigned"|"install_partner_on_way"|"install_partner_reached"|"installation_started"|"installation_done"|"order_complete";
+type ConsultStage = "scheduled"|"partner_assigned"|"partner_on_way"|"partner_reached"|"consultation_done"|"boq_shared"|"payment_made"|"delivery_booked"|"installation_booked"|"delivery_on_way"|"delivered"|"install_partner_assigned"|"install_partner_on_way"|"install_partner_reached"|"installation_started"|"installation_done"|"order_complete";
 
 const INSTALLATION_SUB_STATES: ConsultStage[] = ["installation_started", "installation_done"];
 
@@ -6798,25 +7315,28 @@ const INSTALLATION_SUB_STATES: ConsultStage[] = ["installation_started", "instal
 const PARTNER_SUB_STATES: ConsultStage[] = ["partner_assigned", "partner_on_way", "partner_reached"];
 // install partner sub-states are also merged into one visual step
 const INSTALL_PARTNER_SUB_STATES: ConsultStage[] = ["install_partner_assigned", "install_partner_on_way", "install_partner_reached"];
+// consultation_done / boq_shared / payment_made are merged into one visual step
+const QUOTE_SUB_STATES: ConsultStage[] = ["consultation_done", "boq_shared", "payment_made"];
+// delivery_on_way / delivered are merged into one visual step
+const DELIVERY_SUB_STATES: ConsultStage[] = ["delivery_on_way", "delivered"];
 
 const CONSULT_STAGES: { key: ConsultStage; label: string; icon: string; desc: string }[] = [
-  { key: "scheduled",           label: "Consultation Scheduled", icon: "📅", desc: "Your consultation has been scheduled" },
-  { key: "partner_assigned",    label: "Partner Assigned",       icon: "👤", desc: "A design expert has been assigned" }, // merged visual step
-  { key: "consultation_done",   label: "Consultation Done",      icon: "✅", desc: "Consultation completed successfully" },
-  { key: "boq_shared",          label: "BOQ Shared",             icon: "📋", desc: "Bill of Quantities shared — make 65% payment to proceed" },
-  { key: "payment_made",        label: "Payment Made (65%)",     icon: "💳", desc: "Initial payment confirmed" },
-  { key: "delivery_booked",     label: "Delivery Slot Booked",   icon: "📦", desc: "Delivery has been scheduled" },
-  { key: "installation_booked", label: "Installation Booked",    icon: "🔧", desc: "Installation slot confirmed" },
-  { key: "delivered",                label: "Items Delivered",   icon: "🏠", desc: "All items have been delivered" },
-  { key: "install_partner_assigned", label: "Partner Assigned",  icon: "👤", desc: "An installation partner has been assigned" }, // merged visual step
-  { key: "installation_started", label: "Installation",           icon: "🔨", desc: "Installation is currently in progress" }, // merged visual step
-  { key: "order_complete",      label: "Order Complete",         icon: "🎉", desc: "Your home is ready. Enjoy your new space!" },
+  { key: "scheduled",            label: "Consultation Scheduled", icon: "📅", desc: "Your consultation has been scheduled" },
+  { key: "partner_assigned",     label: "Partner Assigned",       icon: "👤", desc: "A design expert has been assigned" },        // merged visual step
+  { key: "boq_shared",           label: "Quote & Payment",        icon: "📋", desc: "Review your design quote and confirm payment" }, // merged visual step
+  { key: "delivery_booked",      label: "Delivery Slot Booked",   icon: "📦", desc: "Delivery has been scheduled" },
+  { key: "installation_booked",  label: "Installation Booked",    icon: "🔧", desc: "Installation slot confirmed" },
+  { key: "delivered",            label: "Items Delivered",        icon: "🏠", desc: "All items have been delivered" },             // merged visual step (delivery_on_way + delivered)
+  { key: "install_partner_assigned", label: "Partner Assigned",   icon: "👤", desc: "An installation partner has been assigned" }, // merged visual step
+  { key: "installation_started",     label: "Installation",       icon: "🔨", desc: "Installation complete" },    // merged visual step
+  { key: "order_complete",       label: "Order Complete",         icon: "🎉", desc: "Your home is ready. Enjoy your new space!" },
 ];
 
 // Maps a ConsultStage to its visual index in CONSULT_STAGES
-// (partner sub-states all map to index 1; install partner sub-states map to their merged index)
 function consultStageIndex(stage: ConsultStage): number {
   if (PARTNER_SUB_STATES.includes(stage)) return 1;
+  if (QUOTE_SUB_STATES.includes(stage)) return CONSULT_STAGES.findIndex(s => s.key === "boq_shared");
+  if (DELIVERY_SUB_STATES.includes(stage)) return CONSULT_STAGES.findIndex(s => s.key === "delivered");
   if (INSTALL_PARTNER_SUB_STATES.includes(stage)) return CONSULT_STAGES.findIndex(s => s.key === "install_partner_assigned");
   if (INSTALLATION_SUB_STATES.includes(stage)) return CONSULT_STAGES.findIndex(s => s.key === "installation_started");
   return CONSULT_STAGES.findIndex(s => s.key === stage);
@@ -6842,6 +7362,19 @@ const INSTALL_PARTNER_SUB_LABEL: Record<string, { label: string; icon: string; d
   install_partner_reached:  { label: "Partner at Your Location", icon: "📍", desc: "Your installation partner has arrived" },
 };
 
+// Dynamic label/desc/icon for the merged Items Delivered step
+const DELIVERY_SUB_LABEL: Record<string, { label: string; icon: string; desc: string }> = {
+  delivery_on_way: { label: "Delivery On the Way", icon: "🚚", desc: "Your items are on the way — track below" },
+  delivered:       { label: "Items Delivered",     icon: "🏠", desc: "All items have been delivered successfully" },
+};
+
+// Dynamic label/desc/icon for the merged Quote & Payment step
+const QUOTE_SUB_LABEL: Record<string, { label: string; icon: string; desc: string }> = {
+  consultation_done: { label: "Consultation Done",  icon: "✅", desc: "Consultation completed — your quote is being prepared" },
+  boq_shared:        { label: "Quote Shared",        icon: "📋", desc: "Your design quote is ready to review" },
+  payment_made:      { label: "Payment Confirmed",   icon: "💳", desc: "65% payment received — delivery being arranged" },
+};
+
 function getConsultStage(placedAt: number): ConsultStage {
   const d = (Date.now() - placedAt) / 86_400_000;
   if (d < 1)    return "scheduled";
@@ -6853,6 +7386,7 @@ function getConsultStage(placedAt: number): ConsultStage {
   if (d < 25)   return "payment_made";
   if (d < 35)   return "delivery_booked";
   if (d < 50)   return "installation_booked";
+  if (d < 52.5) return "delivery_on_way";
   if (d < 55)   return "delivered";
   if (d < 56)   return "install_partner_assigned";
   if (d < 57)   return "install_partner_on_way";
@@ -6865,22 +7399,55 @@ function getConsultStage(placedAt: number): ConsultStage {
 /* ─────────────────────────────────────────────────────
    ORDER DETAIL VIEW
 ───────────────────────────────────────────────────── */
-function OrderDetailView({ order, onBack, isDesktop }: { order: Order; onBack: () => void; isDesktop?: boolean }) {
+function OrderDetailView({ order, onBack, isDesktop, onUpdateOrder }: { order: Order; onBack: () => void; isDesktop?: boolean; onUpdateOrder: (updated: Order) => void }) {
   const isConsult = order.items.some(i => i.category === "consultation");
   const dateStr = new Date(order.placedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
   const expectedDate = new Date(order.placedAt + 5 * 86_400_000).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
-  const status = isConsult ? getConsultStage(order.placedAt) : getOrderStatus(order.placedAt);
+  const status = isConsult ? getConsultStage(order.placedAt) : (order.status as OrderStatus);
   const consultIdx = consultStageIndex(status as ConsultStage);
   const productStepIdx = ORDER_STATUS_STEPS.findIndex(s => s.key === (status as OrderStatus));
 
   const PARTNERS = [
-    { name: "Vinay Kumar",  role: "Partner Consultant", initials: "VK", color: "#E8975A" },
-    { name: "Deepak Kumar", role: "Partner Supervisor",  initials: "DK", color: "#5A8EE8" },
+    { name: "Vinay Kumar",  role: "Interior Design Consultant", initials: "VK", color: "#E8975A", phone: "+91 98450 12345", rating: 4.8, reviews: 142, photo: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=120&q=80" },
+    { name: "Deepak Kumar", role: "Senior Design Consultant",   initials: "DK", color: "#5A8EE8", phone: "+91 97400 67890", rating: 4.9, reviews: 218, photo: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=120&q=80" },
   ];
   const partner = PARTNERS[parseInt(order.id, 36) % PARTNERS.length];
 
-  const boqAmount = Math.round(order.total * 0.65);
-  const remainingAmount = order.total - boqAmount;
+  const designTotal = order.designPrice ?? order.total;
+  const boqAmount = Math.round(designTotal * 0.65);
+  const remainingAmount = designTotal - boqAmount;
+
+  // Local UI state
+  const [quoteExpanded, setQuoteExpanded] = React.useState(false);
+  const [showPaymentModal, setShowPaymentModal] = React.useState<"boq"|"final"|null>(null);
+  const [otpRevealed, setOtpRevealed] = React.useState(false);
+  const [installOtpRevealed, setInstallOtpRevealed] = React.useState(false);
+  const [selectedDeliveryDate, setSelectedDeliveryDate] = React.useState<string|null>(null);
+  const [selectedDeliverySlot, setSelectedDeliverySlot] = React.useState<string|null>(null);
+  const [selectedInstallDate, setSelectedInstallDate] = React.useState<string|null>(null);
+  const [selectedInstallSlot, setSelectedInstallSlot] = React.useState<string|null>(null);
+  const [showDeliverySheet, setShowDeliverySheet] = React.useState(false);
+  const [showInstallSheet, setShowInstallSheet] = React.useState(false);
+  const [lightboxPhoto, setLightboxPhoto] = React.useState<number|null>(null);
+  const [selectedRating, setSelectedRating] = React.useState(order.rating ?? 0);
+  const [reviewText, setReviewText] = React.useState(order.review ?? "");
+  const [consultOtpState, setConsultOtpState] = React.useState(order.consultOtp ?? "");
+  const [installOtpState, setInstallOtpState] = React.useState(order.installOtp ?? "");
+
+  const updateOrder = (patch: Partial<Order>) => onUpdateOrder({ ...order, ...patch });
+
+  // Generate available dates (next ~14 days, skip Sunday)
+  const availableDates = React.useMemo(() => {
+    const dates: string[] = [];
+    const now = new Date();
+    for (let i = 2; dates.length < 10; i++) {
+      const d = new Date(now.getTime() + i * 86400000);
+      if (d.getDay() === 0) continue;
+      dates.push(d.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" }));
+    }
+    return dates;
+  }, []);
+  const timeSlots = ["Morning (9–12)", "Afternoon (12–4)", "Evening (4–7)"];
 
   const LeftPanel = () => (
     <div style={{ flex: "1 1 0", minWidth: 0, width: "100%" }}>
@@ -6906,18 +7473,24 @@ function OrderDetailView({ order, onBack, isDesktop }: { order: Order; onBack: (
           <div>
             <div style={{ fontSize: 13, fontWeight: 600, color: "#1A1A1A", marginBottom: 16 }}>Progress</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-              {CONSULT_STAGES.map((stage, i) => {
+              {(() => { const visibleStages = CONSULT_STAGES.filter(s => s.key !== "order_complete"); return visibleStages.map((stage, _fi) => {
+                const i = CONSULT_STAGES.findIndex(s2 => s2.key === stage.key);
+                const isLastVisible = _fi === visibleStages.length - 1;
                 const done = i < consultIdx;
                 const current = i === consultIdx;
                 const future = i > consultIdx;
-                // For merged partner steps, use dynamic sub-label
+                // For merged steps, use dynamic sub-label
                 const isPartnerStep = stage.key === "partner_assigned";
+                const isQuoteStep = stage.key === "boq_shared";
+                const isDeliveryStep = stage.key === "delivered";
                 const isInstallPartnerStep = stage.key === "install_partner_assigned";
                 const isInstallationStep = stage.key === "installation_started";
                 const partnerSub = isPartnerStep && current ? PARTNER_SUB_LABEL[status as string] : null;
+                const quoteSub = isQuoteStep && current ? QUOTE_SUB_LABEL[status as string] : null;
+                const deliverySub = isDeliveryStep && current ? DELIVERY_SUB_LABEL[status as string] : null;
                 const installPartnerSub = isInstallPartnerStep && current ? INSTALL_PARTNER_SUB_LABEL[status as string] : null;
                 const installationSub = isInstallationStep && current ? INSTALLATION_SUB_LABEL[status as string] : null;
-                const activeSub = partnerSub ?? installPartnerSub ?? installationSub;
+                const activeSub = partnerSub ?? quoteSub ?? deliverySub ?? installPartnerSub ?? installationSub;
                 const displayLabel = activeSub ? activeSub.label : stage.label;
                 const displayIcon  = activeSub ? activeSub.icon  : stage.icon;
                 const displayDesc  = activeSub ? activeSub.desc  : stage.desc;
@@ -6928,52 +7501,422 @@ function OrderDetailView({ order, onBack, isDesktop }: { order: Order; onBack: (
                       <div style={{ width: 22, height: 22, borderRadius: "50%", background: done ? "#2E7D32" : current ? tokens.primaryDefault : "#E0E0E0", border: `2px solid ${done ? "#2E7D32" : current ? tokens.primaryDefault : "#E0E0E0"}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, flexShrink: 0 }}>
                         {done ? <span style={{ color: "white", fontSize: 9, fontWeight: 700 }}>✓</span> : <span style={{ fontSize: 10 }}>{current ? displayIcon : ""}</span>}
                       </div>
-                      {i < CONSULT_STAGES.length - 1 && (
+                      {!isLastVisible && (
                         <div style={{ width: 2, flex: 1, minHeight: 28, background: done ? "#2E7D32" : "#E8E8E8" }} />
                       )}
                     </div>
                     {/* Content */}
-                    <div style={{ paddingBottom: i < CONSULT_STAGES.length - 1 ? 20 : 0, flex: 1 }}>
+                    <div style={{ paddingBottom: !isLastVisible ? 20 : 0, flex: 1 }}>
                       <div style={{ fontSize: 13, fontWeight: current ? 700 : 500, color: future ? "#AAAAAA" : "#1A1A1A" }}>{displayLabel}</div>
                       {(done || current) && (
                         <div style={{ fontSize: 12, color: "#888", marginTop: 2 }}>{displayDesc}</div>
                       )}
-                      {/* Action buttons for key stages */}
-                      {current && stage.key === "boq_shared" && (
-                        <div style={{ marginTop: 10, background: "#FFF8F0", border: "1px solid #FFD9A0", borderRadius: 10, padding: "12px 14px" }}>
-                          <div style={{ fontSize: 12, color: "#B45309", fontWeight: 600, marginBottom: 4 }}>Payment required</div>
-                          <div style={{ fontSize: 12, color: "#666", marginBottom: 10 }}>Pay 65% ({fmt(boqAmount)}) to proceed. Remaining {fmt(remainingAmount)} on delivery.</div>
-                          <button style={{ background: tokens.primaryDefault, color: "white", border: "none", borderRadius: 8, padding: "9px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Pay {fmt(boqAmount)}</button>
+                      {/* ── Completed / current stage summaries ── */}
+                      {done && isQuoteStep && order.quoteAccepted && (
+                        <div style={{ marginTop: 8 }}>
+                          <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#F0FAF0", border: "1px solid #C8E6C9", borderRadius: 6, padding: "4px 10px", marginBottom: 6 }}>
+                            <span style={{ fontSize: 11, color: "#2E7D32" }}>✓ Quote accepted</span>
+                            <span style={{ fontSize: 11, color: "#AAA" }}>·</span>
+                            <span style={{ fontSize: 11, color: "#2E7D32", fontWeight: 600 }}>{fmt(boqAmount)} paid (65%)</span>
+                          </div>
+                          {/* Expandable BOQ details */}
+                          <div style={{ background: "#F8F8F8", border: "1px solid #E8E8E8", borderRadius: 8, overflow: "hidden" }}>
+                            <button onClick={() => setQuoteExpanded(v => !v)} style={{ width: "100%", background: "none", border: "none", padding: "8px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }}>
+                              <span style={{ fontSize: 11, fontWeight: 600, color: "#555" }}>View BOQ details</span>
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#888" strokeWidth="2.5" style={{ transform: quoteExpanded ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}><path d="M6 9l6 6 6-6"/></svg>
+                            </button>
+                            {quoteExpanded && (
+                              <div style={{ borderTop: "1px solid #E8E8E8", padding: "10px 12px" }}>
+                                {(order.quoteItems ?? []).map((item, qi) => (
+                                  <div key={qi} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 6, color: item.amount < 0 ? "#2E7D32" : "#555" }}>
+                                    <span>{item.label}</span>
+                                    <span style={{ fontWeight: 600 }}>{item.amount < 0 ? `-${fmt(-item.amount)}` : fmt(item.amount)}</span>
+                                  </div>
+                                ))}
+                                <div style={{ borderTop: "1px dashed #DDD", paddingTop: 8, display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 700, color: "#1A1A1A", marginTop: 2 }}>
+                                  <span>Total</span><span>{fmt(designTotal)}</span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       )}
-                      {current && stage.key === "delivery_booked" && (
-                        <button style={{ marginTop: 8, background: "white", color: tokens.primaryDefault, border: `1px solid ${tokens.primaryDefault}`, borderRadius: 8, padding: "7px 16px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Book Delivery Slot</button>
+                      {done && stage.key === "delivery_booked" && order.deliveryDate && (
+                        <div style={{ marginTop: 6, display: "inline-flex", alignItems: "center", gap: 6, background: "#F0FAF0", border: "1px solid #C8E6C9", borderRadius: 6, padding: "4px 10px" }}>
+                          <span style={{ fontSize: 11, color: "#2E7D32" }}>📦</span>
+                          <span style={{ fontSize: 11, color: "#2E7D32", fontWeight: 600 }}>{order.deliveryDate}</span>
+                        </div>
                       )}
-                      {current && stage.key === "installation_booked" && (
-                        <button style={{ marginTop: 8, background: "white", color: tokens.primaryDefault, border: `1px solid ${tokens.primaryDefault}`, borderRadius: 8, padding: "7px 16px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Book Installation Slot</button>
+                      {(done || current) && stage.key === "installation_booked" && (order.installDate || done) && (
+                        <div style={{ marginTop: 6, display: "inline-flex", alignItems: "center", gap: 6, background: "#F0FAF0", border: "1px solid #C8E6C9", borderRadius: 6, padding: "4px 10px" }}>
+                          <span style={{ fontSize: 11, color: "#2E7D32" }}>🔧</span>
+                          <span style={{ fontSize: 11, color: "#2E7D32", fontWeight: 600 }}>{order.installDate ?? new Date(order.placedAt + 7 * 86400000).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" }) + " · Morning (10–1)"}</span>
+                        </div>
+                      )}
+                      {current && stage.key === "installation_booked" && !order.installDate && (
+                        <div style={{ marginTop: 10 }}>
+                          <button onClick={() => setShowInstallSheet(true)} style={{ width: "100%", padding: "10px", background: "#FFF8F0", border: "1px solid #FFD9A0", borderRadius: 10, fontSize: 13, fontWeight: 600, color: "#B45309", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                            🔧 Schedule your installation
+                          </button>
+                          {showInstallSheet && (
+                            <>
+                              <div onClick={() => setShowInstallSheet(false)} style={{ position: "fixed", inset: 0, zIndex: 1200, background: "rgba(0,0,0,0.4)" }} />
+                              <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 1201, background: "white", borderRadius: "20px 20px 0 0", padding: "20px 20px 36px", boxShadow: "0 -4px 32px rgba(0,0,0,0.15)" }}>
+                                <div style={{ width: 36, height: 4, borderRadius: 99, background: "#E0E0E0", margin: "0 auto 20px" }} />
+                                <div style={{ fontSize: 16, fontWeight: 700, color: "#1A1A1A", marginBottom: 16 }}>Schedule your installation</div>
+                                <div style={{ fontSize: 12, fontWeight: 600, color: "#555", marginBottom: 8 }}>Choose a date</div>
+                                <div style={{ overflowX: "auto", display: "flex", gap: 8, paddingBottom: 4, scrollbarWidth: "none" as any } as React.CSSProperties}>
+                                  {availableDates.map(d => (
+                                    <button key={d} onClick={() => setSelectedInstallDate(d)} style={{ flexShrink: 0, padding: "8px 14px", borderRadius: 20, border: `1px solid ${selectedInstallDate === d ? tokens.primaryDefault : "#DDD"}`, background: selectedInstallDate === d ? tokens.primaryDefault : "white", color: selectedInstallDate === d ? "white" : "#333", fontSize: 12, fontWeight: selectedInstallDate === d ? 700 : 400, cursor: "pointer", whiteSpace: "nowrap" as const }}>{d}</button>
+                                  ))}
+                                </div>
+                                <div style={{ fontSize: 12, fontWeight: 600, color: "#555", margin: "16px 0 8px" }}>Choose a time slot</div>
+                                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const }}>
+                                  {timeSlots.map(s => (
+                                    <button key={s} onClick={() => setSelectedInstallSlot(s)} style={{ padding: "8px 14px", borderRadius: 20, border: `1px solid ${selectedInstallSlot === s ? tokens.primaryDefault : "#DDD"}`, background: selectedInstallSlot === s ? tokens.primaryDefault : "white", color: selectedInstallSlot === s ? "white" : "#333", fontSize: 12, fontWeight: selectedInstallSlot === s ? 700 : 400, cursor: "pointer" }}>{s}</button>
+                                  ))}
+                                </div>
+                                <button disabled={!selectedInstallDate || !selectedInstallSlot} onClick={() => { updateOrder({ installDate: `${selectedInstallDate} · ${selectedInstallSlot}` }); setShowInstallSheet(false); }} style={{ marginTop: 20, width: "100%", background: selectedInstallDate && selectedInstallSlot ? "#1A1A1A" : "#CCC", color: "white", border: "none", borderRadius: 12, padding: "14px", fontSize: 14, fontWeight: 700, cursor: selectedInstallDate && selectedInstallSlot ? "pointer" : "not-allowed" }}>Confirm Installation Date</button>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )}
+                      {done && isInstallationStep && order.finalPaymentDone && (
+                        <div style={{ marginTop: 6, display: "inline-flex", alignItems: "center", gap: 6, background: "#F0FAF0", border: "1px solid #C8E6C9", borderRadius: 6, padding: "4px 10px" }}>
+                          <span style={{ fontSize: 11, color: "#2E7D32" }}>✅</span>
+                          <span style={{ fontSize: 11, color: "#2E7D32", fontWeight: 600 }}>Installation Complete · Full payment received</span>
+                        </div>
+                      )}
+                      {/* ── FEATURE 1: Quote/BOQ at boq_shared sub-state ── */}
+                      {current && isQuoteStep && (status as ConsultStage) === "boq_shared" && (
+                        <div style={{ marginTop: 10 }}>
+                          {/* Expandable quote card */}
+                          <div style={{ background: "#FFFBF0", border: "1px solid #FFD9A0", borderRadius: 10, overflow: "hidden" }}>
+                            <button onClick={() => setQuoteExpanded(v => !v)} style={{ width: "100%", background: "none", border: "none", padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                <span style={{ fontSize: 15 }}>📋</span>
+                                <span style={{ fontSize: 13, fontWeight: 700, color: "#1A1A1A" }}>Your Quote</span>
+                                {!order.quoteAccepted && <span style={{ fontSize: 10, fontWeight: 700, color: "#B45309", background: "#FFE0B2", borderRadius: 4, padding: "2px 6px" }}>ACTION REQUIRED</span>}
+                                {order.quoteAccepted && <span style={{ fontSize: 10, fontWeight: 700, color: "#2E7D32", background: "#E8F5E9", borderRadius: 4, padding: "2px 6px" }}>ACCEPTED ✓</span>}
+                              </div>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#666" strokeWidth="2.5" style={{ transform: quoteExpanded ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}><path d="M6 9l6 6 6-6"/></svg>
+                            </button>
+                            {quoteExpanded && (
+                              <div style={{ borderTop: "1px solid #FFD9A0", padding: "12px 14px" }}>
+                                {(order.quoteItems ?? []).map((item, qi) => (
+                                  <div key={qi} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 8, color: item.amount < 0 ? "#2E7D32" : "#333" }}>
+                                    <span>{item.label}</span>
+                                    <span style={{ fontWeight: 600 }}>{item.amount < 0 ? `-${fmt(-item.amount)}` : fmt(item.amount)}</span>
+                                  </div>
+                                ))}
+                                <div style={{ borderTop: "1px dashed #FFD9A0", paddingTop: 10, display: "flex", justifyContent: "space-between", fontSize: 13, fontWeight: 700, color: "#1A1A1A", marginTop: 4 }}>
+                                  <span>Total</span>
+                                  <span>{fmt(designTotal)}</span>
+                                </div>
+                                <div style={{ fontSize: 11, color: "#888", marginTop: 4, marginBottom: 12 }}>65% ({fmt(boqAmount)}) payable now · 35% ({fmt(remainingAmount)}) on completion</div>
+                                {!order.quoteAccepted && (
+                                  <button onClick={() => updateOrder({ quoteAccepted: true })} style={{ width: "100%", background: tokens.primaryDefault, color: "white", border: "none", borderRadius: 8, padding: "10px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Accept & Proceed</button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          {/* Payment CTA — visible only after quote accepted */}
+                          {order.quoteAccepted && (
+                            <div style={{ marginTop: 10, background: "#FFF8F0", border: "1px solid #FFD9A0", borderRadius: 10, padding: "12px 14px" }}>
+                              <div style={{ fontSize: 12, color: "#B45309", fontWeight: 600, marginBottom: 4 }}>Payment required to proceed</div>
+                              <div style={{ fontSize: 12, color: "#666", marginBottom: 10 }}>Pay 65% ({fmt(boqAmount)}) now. Remaining {fmt(remainingAmount)} on completion.</div>
+                              <button onClick={() => setShowPaymentModal("boq")} style={{ background: tokens.primaryDefault, color: "white", border: "none", borderRadius: 8, padding: "9px 20px", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Pay {fmt(boqAmount)}</button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {/* ── FEATURE 2: Delivery date picker at payment_made sub-state ── */}
+                      {current && isQuoteStep && (status as ConsultStage) === "payment_made" && (
+                        <>
+                          <button onClick={() => setShowDeliverySheet(true)} style={{ marginTop: 10, width: "100%", padding: "10px", background: "#FFF8F0", border: "1px solid #FFD9A0", borderRadius: 10, fontSize: 13, fontWeight: 600, color: "#B45309", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                            📅 Schedule your delivery
+                          </button>
+                          {showDeliverySheet && (
+                            <>
+                              <div onClick={() => setShowDeliverySheet(false)} style={{ position: "fixed", inset: 0, zIndex: 1200, background: "rgba(0,0,0,0.4)" }} />
+                              <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 1201, background: "white", borderRadius: "20px 20px 0 0", padding: "20px 20px 36px", boxShadow: "0 -4px 32px rgba(0,0,0,0.15)" }}>
+                                <div style={{ width: 36, height: 4, borderRadius: 99, background: "#E0E0E0", margin: "0 auto 20px" }} />
+                                <div style={{ fontSize: 16, fontWeight: 700, color: "#1A1A1A", marginBottom: 16 }}>Schedule your delivery</div>
+                                <div style={{ fontSize: 12, fontWeight: 600, color: "#555", marginBottom: 8 }}>Choose a date</div>
+                                <div style={{ overflowX: "auto", display: "flex", gap: 8, paddingBottom: 4, scrollbarWidth: "none" as any } as React.CSSProperties}>
+                                  {availableDates.map(d => (
+                                    <button key={d} onClick={() => setSelectedDeliveryDate(d)} style={{ flexShrink: 0, padding: "8px 14px", borderRadius: 20, border: `1px solid ${selectedDeliveryDate === d ? tokens.primaryDefault : "#DDD"}`, background: selectedDeliveryDate === d ? tokens.primaryDefault : "white", color: selectedDeliveryDate === d ? "white" : "#333", fontSize: 12, fontWeight: selectedDeliveryDate === d ? 700 : 400, cursor: "pointer", whiteSpace: "nowrap" as const }}>{d}</button>
+                                  ))}
+                                </div>
+                                <div style={{ fontSize: 12, fontWeight: 600, color: "#555", margin: "16px 0 8px" }}>Choose a time slot</div>
+                                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const }}>
+                                  {timeSlots.map(s => (
+                                    <button key={s} onClick={() => setSelectedDeliverySlot(s)} style={{ padding: "8px 14px", borderRadius: 20, border: `1px solid ${selectedDeliverySlot === s ? tokens.primaryDefault : "#DDD"}`, background: selectedDeliverySlot === s ? tokens.primaryDefault : "white", color: selectedDeliverySlot === s ? "white" : "#333", fontSize: 12, fontWeight: selectedDeliverySlot === s ? 700 : 400, cursor: "pointer" }}>{s}</button>
+                                  ))}
+                                </div>
+                                <button disabled={!selectedDeliveryDate || !selectedDeliverySlot} onClick={() => { updateOrder({ deliveryDate: `${selectedDeliveryDate} · ${selectedDeliverySlot}`, placedAt: Date.now() - 35.1 * 86400000 }); setShowDeliverySheet(false); }} style={{ marginTop: 20, width: "100%", background: selectedDeliveryDate && selectedDeliverySlot ? "#1A1A1A" : "#CCC", color: "white", border: "none", borderRadius: 12, padding: "14px", fontSize: 14, fontWeight: 700, cursor: selectedDeliveryDate && selectedDeliverySlot ? "pointer" : "not-allowed" }}>Confirm Delivery Date</button>
+                              </div>
+                            </>
+                          )}
+                        </>
+                      )}
+                      {/* ── FEATURE 2: Installation date picker at delivery_booked ── */}
+                      {current && stage.key === "delivery_booked" && (
+                        <div style={{ marginTop: 10 }}>
+                          {order.installDate ? (
+                            <div style={{ background: "#F0FAF0", border: "1px solid #A0D9A0", borderRadius: 10, padding: "12px 14px", display: "flex", alignItems: "center", gap: 8 }}>
+                              <span style={{ fontSize: 16 }}>✅</span>
+                              <div>
+                                <div style={{ fontSize: 12, fontWeight: 600, color: "#2E7D32" }}>Installation Scheduled</div>
+                                <div style={{ fontSize: 12, color: "#555" }}>{order.installDate}</div>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              <button onClick={() => setShowInstallSheet(true)} style={{ marginTop: 8, width: "100%", padding: "10px", background: "#FFF8F0", border: "1px solid #FFD9A0", borderRadius: 10, fontSize: 13, fontWeight: 600, color: "#B45309", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                                🔧 Schedule your installation
+                              </button>
+                              {showInstallSheet && (
+                                <>
+                                  <div onClick={() => setShowInstallSheet(false)} style={{ position: "fixed", inset: 0, zIndex: 1200, background: "rgba(0,0,0,0.4)" }} />
+                                  <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 1201, background: "white", borderRadius: "20px 20px 0 0", padding: "20px 20px 36px", boxShadow: "0 -4px 32px rgba(0,0,0,0.15)" }}>
+                                    <div style={{ width: 36, height: 4, borderRadius: 99, background: "#E0E0E0", margin: "0 auto 20px" }} />
+                                    <div style={{ fontSize: 16, fontWeight: 700, color: "#1A1A1A", marginBottom: 16 }}>Schedule your installation</div>
+                                    <div style={{ fontSize: 12, fontWeight: 600, color: "#555", marginBottom: 8 }}>Choose a date</div>
+                                    <div style={{ overflowX: "auto", display: "flex", gap: 8, paddingBottom: 4, scrollbarWidth: "none" as any } as React.CSSProperties}>
+                                      {availableDates.map(d => (
+                                        <button key={d} onClick={() => setSelectedInstallDate(d)} style={{ flexShrink: 0, padding: "8px 14px", borderRadius: 20, border: `1px solid ${selectedInstallDate === d ? tokens.primaryDefault : "#DDD"}`, background: selectedInstallDate === d ? tokens.primaryDefault : "white", color: selectedInstallDate === d ? "white" : "#333", fontSize: 12, fontWeight: selectedInstallDate === d ? 700 : 400, cursor: "pointer", whiteSpace: "nowrap" as const }}>{d}</button>
+                                      ))}
+                                    </div>
+                                    <div style={{ fontSize: 12, fontWeight: 600, color: "#555", margin: "16px 0 8px" }}>Choose a time slot</div>
+                                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const }}>
+                                      {timeSlots.map(s => (
+                                        <button key={s} onClick={() => setSelectedInstallSlot(s)} style={{ padding: "8px 14px", borderRadius: 20, border: `1px solid ${selectedInstallSlot === s ? tokens.primaryDefault : "#DDD"}`, background: selectedInstallSlot === s ? tokens.primaryDefault : "white", color: selectedInstallSlot === s ? "white" : "#333", fontSize: 12, fontWeight: selectedInstallSlot === s ? 700 : 400, cursor: "pointer" }}>{s}</button>
+                                      ))}
+                                    </div>
+                                    <button disabled={!selectedInstallDate || !selectedInstallSlot} onClick={() => { updateOrder({ installDate: `${selectedInstallDate} · ${selectedInstallSlot}`, placedAt: Date.now() - 55.1 * 86400000 }); setShowInstallSheet(false); }} style={{ marginTop: 20, width: "100%", background: selectedInstallDate && selectedInstallSlot ? "#1A1A1A" : "#CCC", color: "white", border: "none", borderRadius: 12, padding: "14px", fontSize: 14, fontWeight: 700, cursor: selectedInstallDate && selectedInstallSlot ? "pointer" : "not-allowed" }}>Confirm Installation Date</button>
+                                  </div>
+                                </>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      )}
+                      {/* ── Partner card (shown for all partner sub-states) ── */}
+                      {current && isPartnerStep && (
+                        <div style={{ marginTop: 10, background: "white", border: "1px solid #E8E8E8", borderRadius: 12, padding: "14px", display: "flex", gap: 12, alignItems: "flex-start" }}>
+                          {/* Photo */}
+                          <div style={{ width: 52, height: 52, borderRadius: "50%", overflow: "hidden", flexShrink: 0, border: "2px solid #F0F0F0" }}>
+                            <img src={partner.photo} alt={partner.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 14, fontWeight: 700, color: "#1A1A1A", marginBottom: 2 }}>{partner.name}</div>
+                            <div style={{ fontSize: 12, color: "#888", marginBottom: 6 }}>{partner.role}</div>
+                            {/* Rating */}
+                            <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 8 }}>
+                              <div style={{ display: "flex", gap: 1 }}>
+                                {[1,2,3,4,5].map(s => <span key={s} style={{ fontSize: 11, color: s <= Math.round(partner.rating) ? "#FF6B00" : "#DDD" }}>★</span>)}
+                              </div>
+                              <span style={{ fontSize: 12, fontWeight: 600, color: "#1A1A1A" }}>{partner.rating}</span>
+                              <span style={{ fontSize: 11, color: "#999" }}>({partner.reviews} reviews)</span>
+                            </div>
+                            {/* Phone */}
+                            <a href={`tel:${partner.phone}`} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#F5F5F5", border: "1px solid #E0E0E0", borderRadius: 8, padding: "7px 14px", fontSize: 12, fontWeight: 600, color: "#1A1A1A", textDecoration: "none" }}>
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 4.07a2 2 0 0 1 2-2.18h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L10.91 9a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+                              {partner.phone}
+                            </a>
+                          </div>
+                        </div>
+                      )}
+                      {/* ── FEATURE 3: OTP card at partner_reached ── */}
+                      {current && isPartnerStep && (status as ConsultStage) === "partner_reached" && (
+                        <div style={{ marginTop: 10, background: "#F0F4FF", border: "1px solid #C5D4FF", borderRadius: 10, padding: "14px" }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: "#1A3A8F", marginBottom: 4 }}>Share this code with your designer to begin</div>
+                          <div style={{ fontSize: 11, color: "#666", marginBottom: 14 }}>Your designer needs this OTP to start the consultation session</div>
+                          <div style={{ display: "flex", gap: 10, justifyContent: "center", marginBottom: 14 }}>
+                            {(otpRevealed ? consultOtpState.split("") : ["●","●","●","●"]).map((c, ci) => (
+                              <div key={ci} style={{ width: 44, height: 52, borderRadius: 10, background: "white", border: "1.5px solid #C5D4FF", display: "flex", alignItems: "center", justifyContent: "center", fontSize: otpRevealed ? 22 : 18, fontWeight: 700, color: "#1A3A8F", letterSpacing: 0 }}>{c}</div>
+                            ))}
+                          </div>
+                          <div style={{ display: "flex", gap: 8 }}>
+                            <button onClick={() => setOtpRevealed(v => !v)} style={{ flex: 1, padding: "9px", border: "1px solid #C5D4FF", borderRadius: 8, background: "white", color: "#1A3A8F", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>{otpRevealed ? "Hide OTP" : "Tap to Reveal"}</button>
+                            <button onClick={() => { const otp = String(Math.floor(Math.random()*9000)+1000); setConsultOtpState(otp); updateOrder({ consultOtp: otp }); }} style={{ flex: 1, padding: "9px", border: "1px solid #C5D4FF", borderRadius: 8, background: "white", color: "#1A3A8F", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Resend OTP</button>
+                          </div>
+                        </div>
+                      )}
+                      {/* ── FEATURE 3: OTP card at install_partner_reached ── */}
+                      {current && isInstallPartnerStep && (status as ConsultStage) === "install_partner_reached" && (
+                        <div style={{ marginTop: 10, background: "#F0F4FF", border: "1px solid #C5D4FF", borderRadius: 10, padding: "14px" }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: "#1A3A8F", marginBottom: 4 }}>Share this code with your installation team</div>
+                          <div style={{ fontSize: 11, color: "#666", marginBottom: 14 }}>Your installer needs this OTP to begin the installation</div>
+                          <div style={{ display: "flex", gap: 10, justifyContent: "center", marginBottom: 14 }}>
+                            {(installOtpRevealed ? installOtpState.split("") : ["●","●","●","●"]).map((c, ci) => (
+                              <div key={ci} style={{ width: 44, height: 52, borderRadius: 10, background: "white", border: "1.5px solid #C5D4FF", display: "flex", alignItems: "center", justifyContent: "center", fontSize: installOtpRevealed ? 22 : 18, fontWeight: 700, color: "#1A3A8F" }}>{c}</div>
+                            ))}
+                          </div>
+                          <div style={{ display: "flex", gap: 8 }}>
+                            <button onClick={() => setInstallOtpRevealed(v => !v)} style={{ flex: 1, padding: "9px", border: "1px solid #C5D4FF", borderRadius: 8, background: "white", color: "#1A3A8F", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>{installOtpRevealed ? "Hide OTP" : "Tap to Reveal"}</button>
+                            <button onClick={() => { const otp = String(Math.floor(Math.random()*9000)+1000); setInstallOtpState(otp); updateOrder({ installOtp: otp }); }} style={{ flex: 1, padding: "9px", border: "1px solid #C5D4FF", borderRadius: 8, background: "white", color: "#1A3A8F", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Resend OTP</button>
+                          </div>
+                        </div>
+                      )}
+                      {/* ── Install partner card (shown for all install partner sub-states) ── */}
+                      {current && isInstallPartnerStep && (
+                        <div style={{ marginTop: 10, background: "white", border: "1px solid #E8E8E8", borderRadius: 12, padding: "14px", display: "flex", gap: 12, alignItems: "flex-start" }}>
+                          <div style={{ width: 52, height: 52, borderRadius: "50%", overflow: "hidden", flexShrink: 0, border: "2px solid #F0F0F0" }}>
+                            <img src={partner.photo} alt={partner.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 14, fontWeight: 700, color: "#1A1A1A", marginBottom: 2 }}>{partner.name}</div>
+                            <div style={{ fontSize: 12, color: "#888", marginBottom: 6 }}>{partner.role}</div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 8 }}>
+                              <div style={{ display: "flex", gap: 1 }}>
+                                {[1,2,3,4,5].map(s => <span key={s} style={{ fontSize: 11, color: s <= Math.round(partner.rating) ? "#FF6B00" : "#DDD" }}>★</span>)}
+                              </div>
+                              <span style={{ fontSize: 12, fontWeight: 600, color: "#1A1A1A" }}>{partner.rating}</span>
+                              <span style={{ fontSize: 11, color: "#999" }}>({partner.reviews} reviews)</span>
+                            </div>
+                            <a href={`tel:${partner.phone}`} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "#F5F5F5", border: "1px solid #E0E0E0", borderRadius: 8, padding: "7px 14px", fontSize: 12, fontWeight: 600, color: "#1A1A1A", textDecoration: "none" }}>
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 4.07a2 2 0 0 1 2-2.18h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L10.91 9a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+                              {partner.phone}
+                            </a>
+                          </div>
+                        </div>
+                      )}
+                      {/* ── FEATURE 4: Tracking card at delivery_on_way sub-state ── */}
+                      {current && isDeliveryStep && (status as ConsultStage) === "delivery_on_way" && (
+                        <div style={{ marginTop: 10, background: "white", border: "1px solid #E8E8E8", borderRadius: 10, overflow: "hidden" }}>
+                          <div style={{ background: "#1A1A2E", padding: "10px 14px", display: "flex", alignItems: "center", gap: 8 }}>
+                            <div style={{ width: 32, height: 32, borderRadius: "50%", background: "#E8975A", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "white" }}>RK</div>
+                            <div>
+                              <div style={{ fontSize: 12, fontWeight: 600, color: "white" }}>Ravi Kumar · Delivery Partner</div>
+                              <div style={{ fontSize: 10, color: "#AAA" }}>Maruti Eco Van · KA-03 X 1234</div>
+                            </div>
+                            <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 4, background: "#FF6B00", borderRadius: 6, padding: "4px 10px" }}>
+                              <span style={{ fontSize: 11, fontWeight: 700, color: "white" }}>En Route</span>
+                            </div>
+                          </div>
+                          {/* Map placeholder */}
+                          <div style={{ height: 100, background: "#E8EDF0", position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            <div style={{ position: "absolute", inset: 0, backgroundImage: "repeating-linear-gradient(0deg,transparent,transparent 19px,#D0D8E0 20px),repeating-linear-gradient(90deg,transparent,transparent 19px,#D0D8E0 20px)", opacity: 0.6 }} />
+                            <div style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                              <svg width="24" height="24" viewBox="0 0 24 24" fill="#FF4444" stroke="white" strokeWidth="1"><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3" fill="white"/></svg>
+                              <div style={{ background: "white", borderRadius: 6, padding: "3px 10px", fontSize: 11, fontWeight: 600, color: "#333", boxShadow: "0 1px 4px rgba(0,0,0,0.15)" }}>Arriving in ~20 min</div>
+                            </div>
+                          </div>
+                          <div style={{ padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <div style={{ fontSize: 12, color: "#666" }}>2.3 km away</div>
+                            <button style={{ display: "flex", alignItems: "center", gap: 6, background: "#F0F0FF", border: "none", borderRadius: 8, padding: "7px 14px", fontSize: 12, fontWeight: 600, color: "#1A3A8F", cursor: "pointer" }}>
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 4.07a2 2 0 0 1 2-2.18h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L10.91 9a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+                              Call Partner
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      {/* ── Delivered confirmation at delivered sub-state ── */}
+                      {current && isDeliveryStep && (status as ConsultStage) === "delivered" && (
+                        <div style={{ marginTop: 10, background: "#F0FAF0", border: "1px solid #A0D9A0", borderRadius: 10, padding: "14px", display: "flex", alignItems: "center", gap: 12 }}>
+                          <span style={{ fontSize: 28 }}>🏠</span>
+                          <div>
+                            <div style={{ fontSize: 13, fontWeight: 700, color: "#2E7D32" }}>All items delivered!</div>
+                            <div style={{ fontSize: 12, color: "#555", marginTop: 2 }}>Your items have arrived. Installation partner will be assigned shortly.</div>
+                          </div>
+                        </div>
+                      )}
+                      {/* ── FEATURE 5: Photos + rating at installation_done ── */}
+                      {current && isInstallationStep && (status as ConsultStage) === "installation_done" && (
+                        <div style={{ marginTop: 10 }}>
+                          {/* Success banner */}
+                          <div style={{ background: "#F0FAF0", border: "1px solid #A0D9A0", borderRadius: 10, padding: "12px 14px", display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                            <span style={{ fontSize: 22 }}>🎉</span>
+                            <div>
+                              <div style={{ fontSize: 13, fontWeight: 700, color: "#2E7D32" }}>Your space is ready!</div>
+                              <div style={{ fontSize: 12, color: "#555" }}>The installation is complete. See below for photos.</div>
+                            </div>
+                          </div>
+                          {/* Completion photos */}
+                          {(order.completionPhotos ?? []).length > 0 && (
+                            <div style={{ marginBottom: 12 }}>
+                              <div style={{ fontSize: 12, fontWeight: 600, color: "#1A1A1A", marginBottom: 8 }}>Completion photos</div>
+                              <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4, scrollbarWidth: "none" as any }}>
+                                {(order.completionPhotos ?? []).map((url, pi) => (
+                                  <button key={pi} onClick={() => setLightboxPhoto(pi)} style={{ flexShrink: 0, width: 90, height: 90, borderRadius: 8, overflow: "hidden", border: "none", padding: 0, cursor: "pointer" }}>
+                                    <img src={url} alt="completion" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {/* Rating & review */}
+                          {!order.reviewSubmitted ? (
+                            <div style={{ background: "#FFFBF0", border: "1px solid #FFD9A0", borderRadius: 12, padding: "16px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                              <div>
+                                <div style={{ fontSize: 13, fontWeight: 700, color: "#1A1A1A", marginBottom: 2 }}>Rate your experience</div>
+                                <div style={{ fontSize: 11, color: "#888" }}>How was your Livspace Elevate experience?</div>
+                              </div>
+                              <button style={{ flexShrink: 0, background: "#F5A623", color: "white", border: "none", borderRadius: 24, padding: "10px 20px", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" as const }}>Rate &amp; Review</button>
+                            </div>
+                          ) : (
+                            <div style={{ background: "#F0FAF0", border: "1px solid #A0D9A0", borderRadius: 10, padding: "12px 14px" }}>
+                              <div style={{ fontSize: 13, fontWeight: 700, color: "#2E7D32", marginBottom: 4 }}>Review submitted! ✅</div>
+                              <div style={{ display: "flex", gap: 2, marginBottom: 4 }}>{[1,2,3,4,5].map(s => <span key={s} style={{ fontSize: 14, color: s <= (order.rating ?? 0) ? "#FF6B00" : "#DDD" }}>★</span>)}</div>
+                              {order.review && <div style={{ fontSize: 12, color: "#555", fontStyle: "italic" }}>"{order.review}"</div>}
+                            </div>
+                          )}
+                          {/* ── FEATURE 6: Final payment at installation_done ── */}
+                          {!order.finalPaymentDone && (
+                            <div style={{ marginTop: 10, background: "#FFF8F0", border: "1px solid #FFD9A0", borderRadius: 10, padding: "14px" }}>
+                              <div style={{ fontSize: 13, fontWeight: 700, color: "#B45309", marginBottom: 4 }}>Complete your payment</div>
+                              <div style={{ fontSize: 12, color: "#666", marginBottom: 8 }}>Final 35% balance due on completion</div>
+                              {[
+                                { label: "Total order value", value: fmt(designTotal) },
+                                { label: "Paid (65%)",        value: fmt(boqAmount) },
+                              ].map((r, ri) => (
+                                <div key={ri} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 6, color: "#555" }}>
+                                  <span>{r.label}</span><span>{r.value}</span>
+                                </div>
+                              ))}
+                              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, fontWeight: 700, color: "#1A1A1A", borderTop: "1px solid #FFD9A0", paddingTop: 8, marginBottom: 12 }}>
+                                <span>Remaining</span><span>{fmt(remainingAmount)}</span>
+                              </div>
+                              <button onClick={() => setShowPaymentModal("final")} style={{ width: "100%", background: tokens.primaryDefault, color: "white", border: "none", borderRadius: 8, padding: "11px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Pay {fmt(remainingAmount)} to Complete</button>
+                            </div>
+                          )}
+                          {order.finalPaymentDone && (
+                            <div style={{ marginTop: 10, background: "#F0FAF0", border: "1px solid #A0D9A0", borderRadius: 10, padding: "12px 14px", display: "flex", alignItems: "center", gap: 8 }}>
+                              <span style={{ fontSize: 22 }}>✅</span>
+                              <div>
+                                <div style={{ fontSize: 13, fontWeight: 700, color: "#2E7D32" }}>Order Complete!</div>
+                                <div style={{ fontSize: 12, color: "#555" }}>Full payment received. Enjoy your new space!</div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       )}
                     </div>
                   </div>
                 );
-              })}
+              }); })()}
             </div>
           </div>
         ) : (
-          /* ── Product order: delivery + items ── */
+          /* ── Product order: status + items ── */
           <div>
             <div style={{ background: "#F8F8F8", borderRadius: 10, padding: "14px 16px", marginBottom: 16 }}>
-              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
-                <div>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: "#888", letterSpacing: "0.07em", marginBottom: 4 }}>EXPECTED DELIVERY</div>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: "#1A1A1A" }}>{expectedDate}, 7–10 AM</div>
-                </div>
-                <button style={{ background: "white", border: "1px solid #DDD", borderRadius: 8, padding: "7px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
-                  Track
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#333" strokeWidth="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-                </button>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#888", letterSpacing: "0.07em", marginBottom: 4 }}>
+                {ORDER_STATUS_STEPS.find(s => s.key === status)?.label.toUpperCase() ?? "STATUS"}
+              </div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: "#1A1A1A", marginBottom: 14 }}>
+                {status === "consultation_scheduled" && `Scheduled: ${expectedDate}, 10–11 AM`}
+                {status === "consultation_completed" && `Completed on ${dateStr}`}
+                {status === "out_for_delivery" && "Arriving in ~2 days"}
+                {status === "items_delivered" && `Delivered on ${dateStr}`}
+                {status === "installation_scheduled" && `Scheduled: ${expectedDate}`}
+                {status === "installation_completed" && `Completed on ${dateStr}`}
               </div>
               {/* Item thumbnails */}
-              <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+              <div style={{ display: "flex", gap: 8 }}>
                 {order.items.slice(0, 3).map((item, i) => (
                   <div key={i} style={{ width: 72, height: 72, borderRadius: 8, background: "#F0EBE3", border: "1px solid #E8E8E8", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 26 }}>{item.emoji}</div>
                 ))}
@@ -6995,9 +7938,20 @@ function OrderDetailView({ order, onBack, isDesktop }: { order: Order; onBack: (
                 );
               })}
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 14 }}>
               {ORDER_STATUS_STEPS.map((s, i) => <div key={s.key} style={{ fontSize: 9, color: i <= productStepIdx ? "#333" : "#AAA", textAlign: "center", flex: 1 }}>{s.label.split(" ")[0]}</div>)}
             </div>
+            {/* Demo: advance to next stage */}
+            {status !== "installation_completed" && (() => {
+              const idx = ORDER_STATUS_STEPS.findIndex(s => s.key === status);
+              const next = ORDER_STATUS_STEPS[idx + 1];
+              return next ? (
+                <button onClick={() => updateOrder({ status: next.key })}
+                  style={{ width: "100%", background: "none", border: "1px dashed #CCC", borderRadius: 8, padding: "9px", fontSize: 12, color: "#888", cursor: "pointer" }}>
+                  [Demo] Advance → {next.label}
+                </button>
+              ) : null;
+            })()}
           </div>
         )}
       </div>
@@ -7073,6 +8027,20 @@ function OrderDetailView({ order, onBack, isDesktop }: { order: Order; onBack: (
             <button onClick={onBack} style={{ background: "none", border: "none", padding: 0, color: "#888", fontSize: 12, cursor: "pointer" }}>Orders</button>
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#CCC" strokeWidth="2.5"><path d="M9 18l6-6-6-6"/></svg>
             <span style={{ color: "#1A1A1A", fontWeight: 500 }}>#{order.id}</span>
+            {isConsult && (() => {
+              // Dev helper: jump to next stage
+              const STAGE_DAYS: Record<ConsultStage, number> = { scheduled:0, partner_assigned:1, partner_on_way:1.5, partner_reached:3, consultation_done:4, boq_shared:8, payment_made:15, delivery_booked:25, installation_booked:35, delivery_on_way:50, delivered:52.5, install_partner_assigned:55, install_partner_on_way:56, install_partner_reached:57, installation_started:58, installation_done:60, order_complete:65 };
+              const stageOrder: ConsultStage[] = ["scheduled","partner_assigned","partner_on_way","partner_reached","consultation_done","boq_shared","payment_made","delivery_booked","installation_booked","delivery_on_way","delivered","install_partner_assigned","install_partner_on_way","install_partner_reached","installation_started","installation_done","order_complete"];
+              const curIdx = stageOrder.indexOf(status as ConsultStage);
+              const nextStage = stageOrder[curIdx + 1];
+              if (!nextStage) return null;
+              const nextDays = STAGE_DAYS[nextStage] + 0.1;
+              return (
+                <button onClick={() => updateOrder({ placedAt: Date.now() - nextDays * 86400000 })} style={{ marginLeft: "auto", background: "#1A1A2E", color: "white", border: "none", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+                  ⚡ Next stage
+                </button>
+              );
+            })()}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <button onClick={onBack} style={{ background: "none", border: "none", cursor: "pointer", padding: 4, display: "flex" }}>
@@ -7090,11 +8058,62 @@ function OrderDetailView({ order, onBack, isDesktop }: { order: Order; onBack: (
           <RightPanel />
         </div>
       </div>
+
+      {/* ── Payment modal overlay ── */}
+      {showPaymentModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 1000, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+          <div style={{ background: "white", borderRadius: "20px 20px 0 0", padding: "24px 20px 32px", width: "100%", maxWidth: 480 }}>
+            <div style={{ width: 40, height: 4, background: "#DDD", borderRadius: 2, margin: "0 auto 20px" }} />
+            <div style={{ fontSize: 17, fontWeight: 700, color: "#1A1A1A", marginBottom: 4 }}>
+              {showPaymentModal === "boq" ? "Pay 65% to Proceed" : "Pay Remaining Balance"}
+            </div>
+            <div style={{ fontSize: 13, color: "#888", marginBottom: 20 }}>
+              {showPaymentModal === "boq"
+                ? `${fmt(boqAmount)} · 65% of ${fmt(designTotal)}`
+                : `${fmt(remainingAmount)} · Remaining 35%`}
+            </div>
+            <div style={{ background: "#F8F8F8", borderRadius: 10, padding: "12px 14px", marginBottom: 16 }}>
+              <div style={{ fontSize: 12, color: "#888", marginBottom: 10 }}>Pay via</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                {["💳 UPI", "🏦 Net Banking", "💰 Cards"].map((m, mi) => (
+                  <button key={m} style={{ flex: 1, padding: "8px 4px", border: `1px solid ${mi === 0 ? tokens.primaryDefault : "#DDD"}`, borderRadius: 8, fontSize: 11, background: mi === 0 ? "#F0F4FF" : "white", color: "#333", cursor: "pointer", fontWeight: mi === 0 ? 600 : 400 }}>{m}</button>
+                ))}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => setShowPaymentModal(null)} style={{ flex: 1, padding: "12px", border: "1px solid #DDD", borderRadius: 10, fontSize: 14, fontWeight: 600, background: "white", color: "#333", cursor: "pointer" }}>Cancel</button>
+              <button onClick={() => {
+                if (showPaymentModal === "final") {
+                  updateOrder({ finalPaymentDone: true, placedAt: Date.now() - 65.1 * 86400000 });
+                }
+                setShowPaymentModal(null);
+              }} style={{ flex: 2, padding: "12px", border: "none", borderRadius: 10, fontSize: 14, fontWeight: 700, background: tokens.primaryDefault, color: "white", cursor: "pointer" }}>
+                Pay {fmt(showPaymentModal === "boq" ? boqAmount : remainingAmount)}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Photo lightbox overlay ── */}
+      {lightboxPhoto !== null && (
+        <div onClick={() => setLightboxPhoto(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.92)", zIndex: 1001, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+          <button onClick={() => setLightboxPhoto(null)} style={{ position: "absolute", top: 20, right: 20, background: "rgba(255,255,255,0.15)", border: "none", borderRadius: "50%", width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
+          <img src={(order.completionPhotos ?? [])[lightboxPhoto]} alt="completion" style={{ maxWidth: "90vw", maxHeight: "80vh", objectFit: "contain", borderRadius: 8 }} onClick={e => e.stopPropagation()} />
+          <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+            {(order.completionPhotos ?? []).map((_, pi) => (
+              <button key={pi} onClick={e => { e.stopPropagation(); setLightboxPhoto(pi); }} style={{ width: 8, height: 8, borderRadius: "50%", background: pi === lightboxPhoto ? "white" : "rgba(255,255,255,0.35)", border: "none", cursor: "pointer", padding: 0 }} />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function MyOrdersScreen({ goTo, goBack, orders, isDesktop }: { goTo: (id: ScreenId) => void; goBack: () => void; orders: Order[]; isDesktop?: boolean }) {
+function MyOrdersScreen({ goTo, goBack, orders, isDesktop, onUpdateOrder }: { goTo: (id: ScreenId) => void; goBack: () => void; orders: Order[]; isDesktop?: boolean; onUpdateOrder: (updated: Order) => void }) {
   const [activeTab, setActiveTab] = React.useState<"all"|"products"|"services">("all");
   const [search, setSearch] = React.useState("");
   const [detailOrderId, setDetailOrderId] = React.useState<string|null>(null);
@@ -7103,7 +8122,7 @@ function MyOrdersScreen({ goTo, goBack, orders, isDesktop }: { goTo: (id: Screen
 
   const detailOrder = detailOrderId ? orders.find(o => o.id === detailOrderId) : null;
   if (detailOrder) {
-    return <OrderDetailView order={detailOrder} onBack={() => setDetailOrderId(null)} isDesktop={isDesktop} />;
+    return <OrderDetailView order={detailOrder} onBack={() => setDetailOrderId(null)} isDesktop={isDesktop} onUpdateOrder={onUpdateOrder} />;
   }
 
   const isConsultation = (o: Order) => o.items.some(i => i.category === "consultation");
@@ -7228,14 +8247,31 @@ function MyOrdersScreen({ goTo, goBack, orders, isDesktop }: { goTo: (id: Screen
                 <div style={{ display: "flex", flexDirection: "column", gap: isDesktop ? 12 : 10 }}>
                   {displayedOrders.map((order, oi) => {
                     const consultation = isConsultation(order);
-                    const status = getOrderStatus(order.placedAt);
+                    const status = consultation ? getConsultStage(order.placedAt) as string : order.status as string;
                     const dateStr = new Date(order.placedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
                     const partner = PARTNERS[oi % PARTNERS.length];
-                    const delivered = status === "move_in_ready";
-                    const inProgress = status === "site_visit" || status === "manufacturing";
                     const firstItem = order.items[0];
                     const extraItems = order.items.length - 1;
                     const visitDate = new Date(order.placedAt + 3 * 86400000).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+                    const consultStatus = consultation ? getConsultStage(order.placedAt) : null;
+                    const consultStageObj = consultStatus ? CONSULT_STAGES.find(s => s.key === consultStatus) ?? null : null;
+                    const statusCard = (() => {
+                      if (consultation && order.finalPaymentDone)
+                        return { label: "COMPLETE", value: "Installation done" + (order.rating ? ` · ${order.rating}★` : ""), btnLabel: "View", labelColor: "#2E7D32", bg: "#F0FAF0" };
+                      if (consultation && consultStageObj)
+                        return { label: "CURRENT STATUS", value: `${consultStageObj.icon} ${consultStageObj.label}`, btnLabel: "View", labelColor: "#888", bg: "#F5F5F5" };
+                      if (status === "installation_completed")
+                        return { label: "INSTALLATION COMPLETE", value: dateStr, btnLabel: "Rate & Review", labelColor: "#2E7D32", bg: "#F0FAF0" };
+                      if (status === "installation_scheduled")
+                        return { label: "INSTALLATION SCHEDULED", value: visitDate, btnLabel: "", labelColor: "#B45309", bg: "#FFF8E7" };
+                      if (status === "items_delivered")
+                        return { label: "ITEMS DELIVERED", value: dateStr, btnLabel: "", labelColor: "#888", bg: "#F5F5F5" };
+                      if (status === "out_for_delivery")
+                        return { label: "OUT FOR DELIVERY", value: "Arriving in ~2 days", btnLabel: "Track", labelColor: "#B45309", bg: "#FFF8E7" };
+                      if (status === "consultation_completed")
+                        return { label: "CONSULTATION COMPLETED", value: dateStr, btnLabel: "", labelColor: "#888", bg: "#F5F5F5" };
+                      return { label: "CONSULTATION SCHEDULED", value: `${visitDate}, 10–11 AM`, btnLabel: "", labelColor: "#888", bg: "#F5F5F5" };
+                    })();
 
                     if (!isDesktop) {
                       /* ── MOBILE CARD ── */
@@ -7272,40 +8308,17 @@ function MyOrdersScreen({ goTo, goBack, orders, isDesktop }: { goTo: (id: Screen
                           </div>
 
                           {/* Status footer */}
-                          <div style={{ padding: "10px 14px", borderTop: "1px solid #F5F5F5", background: "#FAFAFA" }}>
-                            {delivered && !consultation ? (
-                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                  <span style={{ fontSize: 11, fontWeight: 700, color: "#2E7D32", background: "#F0FAF0", borderRadius: 5, padding: "3px 8px" }}>DELIVERED ✓</span>
-                                  <span style={{ fontSize: 11, color: "#999" }}>{dateStr}</span>
-                                </div>
-                                <button style={{ background: "#FF6B00", color: "white", border: "none", borderRadius: 8, padding: "6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Rate &amp; Review</button>
-                              </div>
-                            ) : consultation ? (
-                              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                                <div style={{ width: 30, height: 30, borderRadius: "50%", background: partner.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "white", flexShrink: 0 }}>{partner.initials}</div>
-                                <div style={{ flex: 1, minWidth: 0 }}>
-                                  <div style={{ fontSize: 12, fontWeight: 600, color: "#1A1A1A" }}>{partner.name} · {partner.role}</div>
-                                  <div style={{ fontSize: 11, color: "#888" }}>Visit: {visitDate}, 10:00 AM</div>
-                                </div>
-                              </div>
-                            ) : inProgress ? (
-                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                                <span style={{ fontSize: 11, fontWeight: 700, color: "#B45309", background: "#FFF8E7", borderRadius: 5, padding: "3px 8px" }}>IN PROGRESS</span>
-                                <span style={{ fontSize: 11, color: "#999" }}>Est. 30 days</span>
-                              </div>
-                            ) : (
-                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                                <div>
-                                  <div style={{ fontSize: 10, fontWeight: 700, color: "#888", letterSpacing: "0.06em" }}>EXPECTED DELIVERY</div>
-                                  <div style={{ fontSize: 12, fontWeight: 600, color: "#1A1A1A", marginTop: 2 }}>{visitDate}, 7–10 AM</div>
-                                </div>
-                                <button style={{ background: "white", color: "#333", border: "1px solid #DDD", borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
-                                  Track
-                                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-                                </button>
-                              </div>
-                            )}
+                          <div style={{ padding: "10px 14px", borderTop: "1px solid #F0F0F0", background: statusCard.bg, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                            <div>
+                              <div style={{ fontSize: 10, fontWeight: 700, color: statusCard.labelColor, letterSpacing: "0.06em" }}>{statusCard.label}</div>
+                              <div style={{ fontSize: 12, fontWeight: 600, color: "#1A1A1A", marginTop: 2 }}>{statusCard.value}</div>
+                            </div>
+                            {statusCard.btnLabel ? (
+                              <button onClick={() => setDetailOrderId(order.id)} style={{ background: "white", color: "#333", border: "1px solid #DDD", borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+                                {statusCard.btnLabel}
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                              </button>
+                            ) : null}
                           </div>
                         </div>
                       );
@@ -7341,46 +8354,19 @@ function MyOrdersScreen({ goTo, goBack, orders, isDesktop }: { goTo: (id: Screen
                               <div style={{ fontSize: 11, color: "#999", marginTop: 4 }}>{order.lookRoom} · {order.lookName}</div>
                             )}
                           </div>
-                          <div style={{ flexShrink: 0, minWidth: 200, textAlign: "right" }}>
-                            {delivered && !consultation ? (
-                              <div>
-                                <div style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "#F0FAF0", borderRadius: 6, padding: "4px 10px", marginBottom: 8 }}>
-                                  <span style={{ fontSize: 11, fontWeight: 700, color: "#2E7D32" }}>DELIVERED ✓</span>
-                                </div>
-                                <div style={{ fontSize: 12, color: "#888", marginBottom: 10 }}>{dateStr}</div>
-                                <button style={{ background: "#FF6B00", color: "white", border: "none", borderRadius: 8, padding: "7px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Rate &amp; Review</button>
-                              </div>
-                            ) : consultation ? (
-                              <div style={{ textAlign: "left", background: "#F8F8F8", borderRadius: 10, padding: "10px 12px" }}>
-                                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                                  <div style={{ width: 32, height: 32, borderRadius: "50%", background: partner.color, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "white", flexShrink: 0 }}>{partner.initials}</div>
-                                  <div>
-                                    <div style={{ fontSize: 12, fontWeight: 600, color: "#1A1A1A" }}>{partner.name}</div>
-                                    <div style={{ fontSize: 11, color: "#888" }}>{partner.role}</div>
-                                  </div>
-                                </div>
-                                <div style={{ fontSize: 11, color: "#666", marginBottom: 6 }}>You can reach out to me for any queries</div>
-                                <div style={{ fontSize: 10, fontWeight: 700, color: "#888", letterSpacing: "0.06em", marginBottom: 2 }}>SCHEDULED VISIT</div>
-                                <div style={{ fontSize: 12, fontWeight: 600, color: "#1A1A1A" }}>{visitDate}, 10:00 AM</div>
-                              </div>
-                            ) : inProgress ? (
-                              <div>
-                                <div style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "#FFF8E7", borderRadius: 6, padding: "4px 10px", marginBottom: 8 }}>
-                                  <span style={{ fontSize: 11, fontWeight: 700, color: "#B45309" }}>IN PROGRESS</span>
-                                </div>
-                                <div style={{ fontSize: 12, color: "#888" }}>Est. completion in 30 days</div>
-                              </div>
-                            ) : (
-                              <div>
-                                <div style={{ fontSize: 10, fontWeight: 700, color: "#888", letterSpacing: "0.06em", marginBottom: 4, textAlign: "left" }}>EXPECTED DELIVERY</div>
-                                <div style={{ fontSize: 12, fontWeight: 600, color: "#1A1A1A", textAlign: "left", marginBottom: 8 }}>{visitDate}, 7–10 AM</div>
-                                <button style={{ background: "white", color: "#333", border: "1px solid #DDD", borderRadius: 8, padding: "6px 16px", fontSize: 12, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
-                                  Track
-                                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-                                </button>
-                              </div>
-                            )}
+                        </div>
+                        {/* Status footer */}
+                        <div style={{ padding: "10px 16px", borderTop: "1px solid #F0F0F0", background: statusCard.bg, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                          <div>
+                            <div style={{ fontSize: 10, fontWeight: 700, color: statusCard.labelColor, letterSpacing: "0.06em" }}>{statusCard.label}</div>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: "#1A1A1A", marginTop: 2 }}>{statusCard.value}</div>
                           </div>
+                          {statusCard.btnLabel ? (
+                            <button onClick={() => setDetailOrderId(order.id)} style={{ background: "white", color: "#333", border: "1px solid #DDD", borderRadius: 8, padding: "6px 16px", fontSize: 12, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+                              {statusCard.btnLabel}
+                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                            </button>
+                          ) : null}
                         </div>
                       </div>
                     );
