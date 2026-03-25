@@ -6184,28 +6184,120 @@ function WallDesignDetail({ design, allDesigns, onBack, isDesktop, onBookConsult
   );
 
 
-  const InstallProcess = () => (
-    <div style={{ background: isDesktop ? "white" : "transparent", borderRadius: isDesktop ? 12 : 0, border: isDesktop ? `1px solid ${tokens.surfaceVariant}` : "none", padding: isDesktop ? "20px" : "20px 16px 20px" }}>
-      <div style={{ fontSize: 14, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 20 }}>Installation Process</div>
-      <div style={{ display: isDesktop ? "grid" : "block", gridTemplateColumns: isDesktop ? "1fr 1fr" : undefined, gap: isDesktop ? 20 : undefined }}>
-        {INSTALL_STEPS.map((step, i) => (
-          <div key={i} style={{ display: "flex", gap: 14, marginBottom: isDesktop ? 0 : (i < INSTALL_STEPS.length - 1 ? 0 : 0) }}>
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0 }}>
-              <div style={{ width: 28, height: 28, borderRadius: "50%", background: tokens.primaryDefault, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "white", flexShrink: 0 }}>{step.num}</div>
-              {!isDesktop && i < INSTALL_STEPS.length - 1 && <div style={{ width: 2, flex: 1, minHeight: 20, background: tokens.surfaceVariant, marginTop: 4 }} />}
-            </div>
-            <div style={{ flex: 1, paddingBottom: !isDesktop && i < INSTALL_STEPS.length - 1 ? 20 : 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: tokens.onSurfaceDefault, marginBottom: 3 }}>{step.title}</div>
-              <div style={{ fontSize: 11, color: tokens.onSurfaceSecondary, lineHeight: 1.5, marginBottom: 10 }}>{step.desc}</div>
-              <div style={{ width: "100%", height: isDesktop ? 140 : 170, borderRadius: 12, overflow: "hidden", background: "linear-gradient(135deg,#E8D8C4,#D4C0A8)" }}>
-                <img src={step.img} alt={step.title} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+  const InstallProcess = () => {
+    const [activeStep, setActiveStep] = React.useState(0);
+    const [isPaused, setIsPaused] = React.useState(false);
+
+    React.useEffect(() => {
+      if (isPaused) return;
+      const id = setInterval(() => {
+        setActiveStep(s => (s + 1) % INSTALL_STEPS.length);
+      }, 3200);
+      return () => clearInterval(id);
+    }, [isPaused, activeStep]);
+
+    if (!isDesktop) {
+      return (
+        <div style={{ padding: "20px 16px" }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 20 }}>Installation Process</div>
+          {INSTALL_STEPS.map((step, i) => (
+            <div key={i} style={{ display: "flex", gap: 14 }}>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0 }}>
+                <div style={{ width: 28, height: 28, borderRadius: "50%", background: tokens.primaryDefault, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "white", flexShrink: 0 }}>{step.num}</div>
+                {i < INSTALL_STEPS.length - 1 && <div style={{ width: 2, flex: 1, minHeight: 20, background: tokens.surfaceVariant, marginTop: 4 }} />}
+              </div>
+              <div style={{ flex: 1, paddingBottom: i < INSTALL_STEPS.length - 1 ? 20 : 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: tokens.onSurfaceDefault, marginBottom: 3 }}>{step.title}</div>
+                <div style={{ fontSize: 11, color: tokens.onSurfaceSecondary, lineHeight: 1.5, marginBottom: 10 }}>{step.desc}</div>
+                <div style={{ width: "100%", height: 170, borderRadius: 12, overflow: "hidden", background: "linear-gradient(135deg,#E8D8C4,#D4C0A8)" }}>
+                  <img src={step.img} alt={step.title} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                </div>
               </div>
             </div>
+          ))}
+        </div>
+      );
+    }
+
+    const step = INSTALL_STEPS[activeStep];
+
+    return (
+      <div style={{ padding: "20px 0" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 380px", gap: 48, alignItems: "start" }}>
+
+          {/* Left: featured image */}
+          <div style={{ position: "relative", borderRadius: 20, overflow: "hidden", background: "linear-gradient(135deg,#E8D8C4,#D4C0A8)", aspectRatio: "4/3" }}>
+            <img
+              key={activeStep}
+              src={step.img}
+              alt={step.title}
+              style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", transition: "opacity 0.4s" }}
+              onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
+            />
+            {/* Bottom bar */}
+            <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "20px 20px 20px", background: "linear-gradient(to top, rgba(0,0,0,0.5) 0%, transparent 100%)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: "white", background: "rgba(255,255,255,0.2)", borderRadius: 20, padding: "5px 14px", backdropFilter: "blur(4px)" }}>
+                Step {activeStep + 1} of {INSTALL_STEPS.length}
+              </span>
+              <button
+                onClick={() => setIsPaused(p => !p)}
+                style={{ fontSize: 12, fontWeight: 600, color: "white", background: "rgba(255,255,255,0.2)", border: "none", borderRadius: 20, padding: "5px 14px", cursor: "pointer", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", gap: 5 }}
+              >
+                {isPaused ? "▶ Resume" : "⏸ Pause"}
+              </button>
+            </div>
           </div>
-        ))}
+
+          {/* Right: vertical stepper */}
+          <div style={{ paddingTop: 4 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: tokens.primaryDefault, letterSpacing: "0.12em", marginBottom: 20, fontFamily: "var(--font-roboto)" }}>INSTALLATION PROCESS</div>
+            <div>
+              {INSTALL_STEPS.map((s, i) => {
+                const isActive = i === activeStep;
+                const isDone   = i < activeStep;
+                return (
+                  <div key={i} style={{ display: "flex", gap: 16, cursor: "pointer" }} onClick={() => { setActiveStep(i); setIsPaused(true); }}>
+                    {/* Circle + connector line */}
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0 }}>
+                      <div style={{
+                        width: 36, height: 36,
+                        borderRadius: isActive ? 10 : "50%",
+                        background: isDone ? tokens.primaryDefault : isActive ? tokens.primaryDefault : "#E0E0E0",
+                        color: isDone || isActive ? "white" : "#999",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: isDone ? 14 : 13, fontWeight: 700,
+                        flexShrink: 0, transition: "all 0.3s",
+                      }}>
+                        {isDone ? "✓" : s.num}
+                      </div>
+                      {i < INSTALL_STEPS.length - 1 && (
+                        <div style={{ width: 2, flex: 1, minHeight: 24, background: isDone ? tokens.primaryDefault : "#E0E0E0", marginTop: 4, transition: "background 0.3s" }} />
+                      )}
+                    </div>
+
+                    {/* Step content */}
+                    <div style={{ flex: 1, paddingBottom: i < INSTALL_STEPS.length - 1 ? 8 : 0 }}>
+                      {isActive ? (
+                        <div style={{ background: "white", borderRadius: 12, padding: "14px 16px", boxShadow: "0 2px 16px rgba(0,0,0,0.08)", marginBottom: 4 }}>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 6 }}>{s.title}</div>
+                          <div style={{ height: 3, width: 36, background: tokens.primaryDefault, borderRadius: 2, marginBottom: 10 }} />
+                          <div style={{ fontSize: 12, color: tokens.onSurfaceSecondary, lineHeight: 1.65 }}>{s.desc}</div>
+                        </div>
+                      ) : (
+                        <div style={{ padding: "8px 0 16px", fontSize: 13, fontWeight: isDone ? 500 : 400, color: isDone ? tokens.onSurfaceDefault : tokens.onSurfaceSecondary, transition: "color 0.2s" }}>
+                          {s.title}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const CustomerReviews = () => (
     <div style={{ background: "transparent", padding: isDesktop ? "0" : "20px 16px 16px" }}>
@@ -7022,8 +7114,8 @@ function ElevateScreen({ goBack, cartCount, isDesktop, initialRoom, onBookConsul
               </>
             )}
 
-            {/* You may also like — horizontal scroll */}
-            {filtered.length > 0 && (
+            {/* You may also like — hidden when All Rooms selected */}
+            {filtered.length > 0 && selectedRoom !== "all" && (
               <div style={{ marginTop: 40 }}>
                 <div style={{ fontSize: 18, fontWeight: 700, fontFamily: "var(--font-gilroy)", color: tokens.onSurfaceDefault, marginBottom: 16 }}>You May Also Like</div>
                 <div style={{ display: "flex", gap: 16, overflowX: "auto", scrollbarWidth: "none", paddingBottom: 8 } as React.CSSProperties}>
