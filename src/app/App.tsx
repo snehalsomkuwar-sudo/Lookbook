@@ -1643,6 +1643,7 @@ export default function App() {
         .tip-anim { animation: tipBounce 3s 2s ease-in-out infinite; }
         .success-ring-anim { animation: popIn 0.5s ease-out; }
         @keyframes shimmer { 0% { background-position:200% 0; } 100% { background-position:-200% 0; } }
+        @keyframes spin { to { transform: rotate(360deg); } }
         ::-webkit-scrollbar { display: none; }
         @media (min-width: 1024px) { .lb-status-bar { display: none !important; } }
       `}</style>
@@ -2219,6 +2220,7 @@ function GalleryScreen({ goTo, goBack, cartCount, showToast, addItem, setSelecte
   const kidsRoomSeedDoneRef  = useRef(false);
   const studyRoomSeedDoneRef = useRef(false);
   const browseFetchedRef     = useRef(false);
+  const browseRoomRefetchedRef = useRef<Set<string>>(new Set());
 
   /* browse-mode client-side room filter (null = all rooms) */
   const [browseRoomFilter, setBrowseRoomFilter] = useState<string | null>(initialBrowseRoom ?? null);
@@ -2243,6 +2245,13 @@ function GalleryScreen({ goTo, goBack, cartCount, showToast, addItem, setSelecte
   const [galleryColorScheme, setGalleryColorScheme] = useState<string[]>([]);
   const [galleryLayout,      setGalleryLayout]      = useState<string[]>([]);
   const [galleryBudgetTier,  setGalleryBudgetTier]  = useState<string>("");
+
+  /* ── Match my Look upload flow ── */
+  const [showMatchMyLook, setShowMatchMyLook] = useState(false);
+  const [matchUploadedImg, setMatchUploadedImg] = useState<string | null>(null);
+  const [matchLoading, setMatchLoading] = useState(false);
+  const [matchResults, setMatchResults] = useState<any[] | null>(null);
+  const [matchDragOver, setMatchDragOver] = useState(false);
 
   /* ── Gemini moodboard data for palette + material filtering ── */
   const [mbData, setMbData] = useState<Record<string, { palette: string[]; materials: string[]; mood_words: string[] }>>({});
@@ -2277,6 +2286,21 @@ function GalleryScreen({ goTo, goBack, cartCount, showToast, addItem, setSelecte
       setFetchedSections(null);
       (async () => {
         try {
+          /* Seed all lazy rooms upfront so browse mode shows full data */
+          const lazySeedMap: { endpoint: string; ref: React.MutableRefObject<boolean> }[] = [
+            { endpoint: "seed-kids-room",  ref: kidsRoomSeedDoneRef  },
+            { endpoint: "seed-balcony",    ref: balconySeedDoneRef   },
+            { endpoint: "seed-study-room", ref: studyRoomSeedDoneRef },
+          ];
+          await Promise.allSettled(lazySeedMap.map(async ({ endpoint, ref }) => {
+            if (ref.current) return;
+            ref.current = true;
+            await fetch(
+              `https://${projectId}.supabase.co/functions/v1/make-server-ef09e2ac/${endpoint}`,
+              { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${publicAnonKey}` } }
+            );
+          }));
+
           const { data: looks, error: looksErr } = await supabase
             .from("lb_looks")
             .select("id, name, image_url, price, is_top_pick, is_trending, is_under_budget, style:lb_styles(name), room:lb_rooms(slug)");
@@ -2440,6 +2464,49 @@ function GalleryScreen({ goTo, goBack, cartCount, showToast, addItem, setSelecte
   useEffect(() => {
     if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight;
   }, [chatMsgs]);
+
+  /* ── Browse mode: targeted re-fetch when a room filter shows 0 looks ── */
+  useEffect(() => {
+    if (!fromBrowse || !browseRoomFilter || looksLoading) return;
+    if (!fetchedSections) return;
+    const filterSlug = roomToSlug[browseRoomFilter] ?? "";
+    if (!filterSlug) return;
+    if (browseRoomRefetchedRef.current.has(filterSlug)) return;
+    const allCurrent = [...fetchedSections.looks, ...fetchedSections.trending, ...fetchedSections.budget];
+    if (allCurrent.some(l => (l.roomSlug ?? "") === filterSlug)) return;
+    browseRoomRefetchedRef.current.add(filterSlug);
+    const seedEndpoints: Record<string, string> = {
+      "kids-room": "seed-kids-room", "balcony": "seed-balcony", "study-room": "seed-study-room",
+    };
+    (async () => {
+      const endpoint = seedEndpoints[filterSlug];
+      if (endpoint) {
+        try {
+          await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-ef09e2ac/${endpoint}`,
+            { method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${publicAnonKey}` } });
+        } catch {}
+      }
+      const { data: roomRow } = await supabase.from("lb_rooms").select("id").eq("slug", filterSlug).maybeSingle();
+      if (!roomRow) return;
+      const { data: looks } = await supabase
+        .from("lb_looks")
+        .select("id, name, image_url, price, is_top_pick, style:lb_styles(name), room:lb_rooms(slug)")
+        .eq("room_id", roomRow.id);
+      if (!looks || looks.length === 0) return;
+      const newLooks = looks.map((l: any) => ({
+        id: l.id, img: l.image_url, tag: (l.style as any)?.name ?? "",
+        name: l.name, price: `₹${(l.price ?? 0).toLocaleString("en-IN")}`,
+        priceNum: l.price ?? 0, items: "", roomSlug: filterSlug,
+        featured: l.is_top_pick, badge: l.is_top_pick ? { text: "★ TOP PICK", cls: "gold" } : undefined,
+      }));
+      setFetchedSections(prev => {
+        if (!prev) return { looks: newLooks, trending: [], budget: [] };
+        const existingIds = new Set([...prev.looks, ...prev.trending, ...prev.budget].map((l: any) => l.id));
+        const fresh = newLooks.filter((l: any) => !existingIds.has(l.id));
+        return fresh.length === 0 ? prev : { ...prev, looks: [...prev.looks, ...fresh] };
+      });
+    })();
+  }, [browseRoomFilter, fromBrowse, looksLoading, fetchedSections]);
 
   /* fetchedSections drives all three look rows */
   const roomSections = fetchedSections ?? { looks: [], trending: [], budget: [] };
@@ -2734,119 +2801,119 @@ function GalleryScreen({ goTo, goBack, cartCount, showToast, addItem, setSelecte
             </div>
           </div>
         </div>
-        {/* Room tiles row — browse flow: photo tiles | design flow: BHK flat config chips */}
-        <div style={{ background: tokens.surfaceDefault, borderBottom: `1px solid ${tokens.surfaceVariant}`, padding: "16px 40px", display: "flex", gap: 14, overflowX: "auto", flexShrink: 0, alignItems: "center" }}>
-          {fromBrowse ? (
-            desktopRoomTiles.map(room => {
+        {/* ── Room tiles horizontal row (browse mode only) ── */}
+        {fromBrowse && (
+          <div style={{ background: "white", borderBottom: "1px solid #E6E6E6", padding: "12px 40px", display: "flex", gap: 16, overflowX: "auto", flexShrink: 0, alignItems: "flex-start" }}>
+            <button onClick={() => setBrowseRoomFilter(null)} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, border: "none", background: "transparent", cursor: "pointer", flexShrink: 0, padding: 0 }}>
+              <div style={{ width: 88, height: 60, borderRadius: 10, border: `2px solid ${!browseRoomFilter ? tokens.primaryDefault : "#E6E6E6"}`, background: "#F5F5F5", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24 }}>🏡</div>
+              <span style={{ fontSize: 11, fontWeight: !browseRoomFilter ? 700 : 400, color: !browseRoomFilter ? tokens.primaryDefault : "#666", fontFamily: "var(--font-roboto)" }}>All Rooms</span>
+            </button>
+            {desktopRoomTiles.map(room => {
               const sel = browseRoomFilter === room.value;
               return (
-                <div key={room.value} onClick={() => { setBrowseRoomFilter(prev => prev === room.value ? null : room.value); showToast(browseRoomFilter === room.value ? "🏡 Showing all looks…" : `🏡 Showing ${room.label} looks…`); }} style={{ flexShrink: 0, width: 140, height: 90, borderRadius: 14, overflow: "hidden", position: "relative", cursor: "pointer", border: `2.5px solid ${sel ? tokens.primaryDefault : "transparent"}`, boxShadow: sel ? `0 0 0 3px ${tokens.primaryVariant}` : "none", transition: "all 0.15s" }}>
-                  <img src={room.img} alt={room.label} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-                  <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to top, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.05) 60%)" }} />
-                  {sel && <div style={{ position: "absolute", top: 7, right: 7, width: 20, height: 20, borderRadius: "50%", background: tokens.primaryDefault, display: "flex", alignItems: "center", justifyContent: "center" }}><span style={{ color: "white", fontSize: 10 }}>✓</span></div>}
-                  <span style={{ position: "absolute", bottom: 8, left: 10, color: "white", fontSize: 12, fontWeight: 700, textShadow: "0 1px 3px rgba(0,0,0,0.5)" }}>{room.label}</span>
-                </div>
-              );
-            })
-          ) : (
-            <>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, background: tokens.primaryVariant, borderRadius: 20, padding: "5px 12px", flexShrink: 0 }}>
-                <span style={{ fontSize: 13 }}>🏠</span>
-                <span style={{ fontSize: 11, fontWeight: 700, color: tokens.primaryHover, letterSpacing: "0.06em", textTransform: "uppercase" as const, fontFamily: "var(--font-roboto)" }}>Your {bhkType}</span>
-              </div>
-              {(bhkRooms[bhkType] ?? bhkRooms["2BHK"]).map(room => {
-                const sel = selectedRoom === room.value;
-                return (
-                  <div
-                    key={room.label}
-                    onClick={() => { setSelectedRoom(room.value); showToast(`🏡 Showing ${room.label} looks…`); }}
-                    style={{
-                      flexShrink: 0,
-                      width: 80,
-                      height: 80,
-                      borderRadius: 12,
-                      background: sel ? room.bg : tokens.surfaceBg,
-                      border: `${sel ? "2px" : "1px"} solid ${sel ? tokens.primaryDefault : tokens.onSurfaceBorder}`,
-                      boxShadow: sel ? `0 0 0 3px ${tokens.primaryVariant}` : "0 1px 4px rgba(0,0,0,0.07)",
-                      cursor: "pointer",
-                      display: "flex",
-                      flexDirection: "column",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: 4,
-                      position: "relative",
-                      transition: "all 0.15s",
-                    }}
-                  >
-                    {sel && (
-                      <div style={{ position: "absolute", top: 5, right: 5, width: 16, height: 16, borderRadius: "50%", background: tokens.primaryDefault, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <span style={{ color: "white", fontSize: 9, lineHeight: 1 }}>✓</span>
-                      </div>
-                    )}
-                    <span style={{ fontSize: 22, lineHeight: 1 }}>{room.emoji}</span>
-                    <span style={{ fontSize: 10, fontWeight: 600, color: sel ? tokens.primaryHover : tokens.onSurfaceSecondary, textAlign: "center", lineHeight: 1.2, padding: "0 4px", fontFamily: "var(--font-roboto)" }}>{room.label}</span>
+                <button key={room.value} onClick={() => setBrowseRoomFilter(prev => prev === room.value ? null : room.value)} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, border: "none", background: "transparent", cursor: "pointer", flexShrink: 0, padding: 0 }}>
+                  <div style={{ width: 88, height: 60, borderRadius: 10, border: `2px solid ${sel ? tokens.primaryDefault : "#E6E6E6"}`, overflow: "hidden" }}>
+                    <img src={room.img} alt={room.label} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                   </div>
-                );
-              })}
-            </>
-          )}
-        </div>
-        {/* Scrollable content — editorial grid sorted by style DNA */}
-        <div style={{ flex: 1, overflowY: "auto" }}>
-          {/* Section header */}
-          <div style={{ padding: "20px 40px 14px", display: "flex", alignItems: "center", gap: 10, minHeight: 58 }}>
-            {/* Title (fixed left) */}
-            <div style={{ fontFamily: "var(--font-gilroy)", fontSize: 20, fontWeight: 700, color: "var(--foreground)", flexShrink: 0 }}>
-              {fromBrowse
-                ? browseRoomFilter
-                  ? `✦ ${desktopRoomTiles.find(r => r.value === browseRoomFilter)?.label ?? browseRoomFilter} Looks`
-                  : "✦ All Looks"
-                : `✦ ${galleryProfile.primary} Looks`}
-            </div>
+                  <span style={{ fontSize: 11, fontWeight: sel ? 700 : 400, color: sel ? tokens.primaryDefault : "#666", fontFamily: "var(--font-roboto)" }}>{room.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* ── Two-column layout: left filter sidebar + right grid ── */}
+        <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+
+          {/* ── Left filter sidebar ── */}
+          <div style={{ width: 276, flexShrink: 0, borderRight: "1px solid #E6E6E6", background: "white", overflowY: "auto" }}>
+
+            {/* Design-mode room list (non-browse) */}
             {!fromBrowse && (
-              <span style={{ fontSize: 13, color: "var(--muted-foreground)", fontFamily: "var(--font-gilroy)", flexShrink: 0 }}>
-                matched to your DNA
-              </span>
+              <div style={{ padding: "20px 20px 0" }}>
+                <div style={{ fontFamily: "'Poppins',sans-serif", fontSize: 16, fontWeight: 600, color: "#1A1A1A", marginBottom: 14 }}>Rooms</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, background: tokens.primaryVariant, borderRadius: 8, padding: "6px 10px", marginBottom: 8 }}>
+                  <span style={{ fontSize: 13 }}>🏠</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: tokens.primaryHover, letterSpacing: "0.05em", textTransform: "uppercase" as const, fontFamily: "var(--font-roboto)" }}>Your {bhkType}</span>
+                </div>
+                {(bhkRooms[bhkType] ?? bhkRooms["2BHK"]).map(room => {
+                  const sel = selectedRoom === room.value;
+                  return (
+                    <button key={room.label} onClick={() => setSelectedRoom(room.value)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "7px 10px", marginBottom: 2, borderRadius: 8, border: "none", background: sel ? tokens.primaryVariant : "transparent", cursor: "pointer", textAlign: "left" as const }}>
+                      <span style={{ fontSize: 20 }}>{room.emoji}</span>
+                      <span style={{ flex: 1, fontSize: 13, fontWeight: sel ? 700 : 400, color: sel ? tokens.primaryDefault : "#1A1A1A", fontFamily: "var(--font-roboto)" }}>{room.label}</span>
+                      {sel && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={tokens.primaryDefault} strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>}
+                    </button>
+                  );
+                })}
+                <div style={{ height: 1, background: "#E6E6E6", margin: "20px 0" }} />
+              </div>
             )}
 
-            {/* Filter bar — left of count */}
-            <GalleryFilterBar
-              searchQuery={gallerySearchQuery}
-              onClearSearch={() => setGallerySearchQuery("")}
-              colorFamily={galleryColorFamily}
-              onColorFamily={setGalleryColorFamily}
-              material={galleryMaterial}
-              onMaterial={setGalleryMaterial}
-              paletteSwatches={paletteSwatches}
-              topMaterials={topMaterials}
-              styleTags={topStyleTags}
-              styleTag={galleryStyleTag}
-              onStyleTag={setGalleryStyleTag}
-              priceRange={galleryPriceRange}
-              onPriceRange={setGalleryPriceRange}
-              selectedColors={gallerySelectedColors}
-              onSelectedColors={setGallerySelectedColors}
-              selectedThemes={gallerySelectedThemes}
-              onSelectedThemes={setGallerySelectedThemes}
-              onClearAll={clearAllFilters}
-              isDesktop
-              styleOptions={STYLE_OPTIONS}
-              colorScheme={galleryColorScheme}
-              onColorScheme={setGalleryColorScheme}
-              layout={galleryLayout}
-              onLayout={setGalleryLayout}
-              budgetTier={galleryBudgetTier}
-              onBudgetTier={onBudgetTier}
-              budgetTiers={BUDGET_TIERS}
-            />
+            {/* Style section */}
+            <div style={{ padding: fromBrowse ? "20px 20px 0" : "0 20px 0" }}>
+              <div style={{ fontFamily: "'Poppins',sans-serif", fontSize: 16, fontWeight: 600, color: "#1A1A1A", marginBottom: 14 }}>Style</div>
+              <div style={{ display: "flex", flexDirection: "column" as const, gap: 2 }}>
+                {(topStyleTags.length > 0 ? topStyleTags : STYLE_OPTIONS).map(tag => {
+                  const sel = galleryStyleTag === tag;
+                  return (
+                    <label key={tag} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", cursor: "pointer" }}>
+                      <input type="checkbox" checked={sel} onChange={() => setGalleryStyleTag(sel ? "" : tag)} style={{ width: 16, height: 16, accentColor: tokens.primaryDefault, cursor: "pointer", flexShrink: 0 }} />
+                      <span style={{ fontSize: 13, color: sel ? "#1A1A1A" : "#666", fontWeight: sel ? 600 : 400, fontFamily: "var(--font-roboto)" }}>{tag}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
 
-            {/* Count (fixed right) */}
-            {!looksLoading && (
-              <span style={{ fontSize: 13, color: "var(--muted-foreground)", fontFamily: "var(--font-gilroy)", flexShrink: 0, whiteSpace: "nowrap" }}>
-                {filteredAllLooks.length} look{filteredAllLooks.length !== 1 ? "s" : ""}
-              </span>
+            <div style={{ height: 1, background: "#E6E6E6", margin: "20px 0" }} />
+
+            {/* Budget section */}
+            <div style={{ padding: "0 20px" }}>
+              <div style={{ fontFamily: "'Poppins',sans-serif", fontSize: 16, fontWeight: 600, color: "#1A1A1A", marginBottom: 14 }}>Budget</div>
+              <div style={{ display: "flex", flexDirection: "column" as const, gap: 2 }}>
+                {BUDGET_TIERS.map(tier => {
+                  const sel = galleryBudgetTier === tier.label;
+                  return (
+                    <label key={tier.label} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", cursor: "pointer" }}>
+                      <input type="checkbox" checked={sel} onChange={() => onBudgetTier(tier.label)} style={{ width: 16, height: 16, accentColor: tokens.primaryDefault, cursor: "pointer", flexShrink: 0 }} />
+                      <span style={{ fontSize: 13, color: sel ? "#1A1A1A" : "#666", fontWeight: sel ? 600 : 400, fontFamily: "var(--font-roboto)" }}>{tier.label}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Clear all */}
+            {(browseRoomFilter || galleryStyleTag || galleryBudgetTier || galleryColorScheme.length > 0 || galleryMaterial) && (
+              <>
+                <div style={{ height: 1, background: "#E6E6E6", margin: "20px 0" }} />
+                <div style={{ padding: "0 20px 24px" }}>
+                  <button onClick={clearAllFilters} style={{ width: "100%", padding: "9px 0", borderRadius: 8, border: `1.5px solid ${tokens.primaryDefault}`, background: "transparent", color: tokens.primaryDefault, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-roboto)" }}>
+                    Clear all filters
+                  </button>
+                </div>
+              </>
             )}
           </div>
+
+          {/* ── Right panel: title + editorial grid ── */}
+          <div style={{ flex: 1, overflowY: "auto", background: tokens.surfaceBg }}>
+            {/* Title + count bar */}
+            <div style={{ padding: "20px 28px 14px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ fontFamily: "var(--font-gilroy)", fontSize: 20, fontWeight: 700, color: "var(--foreground)" }}>
+                {fromBrowse
+                  ? browseRoomFilter
+                    ? `✦ ${desktopRoomTiles.find(r => r.value === browseRoomFilter)?.label ?? browseRoomFilter} Looks`
+                    : "✦ All Looks"
+                  : `✦ ${galleryProfile.primary} Looks`}
+              </div>
+              {!looksLoading && (
+                <span style={{ fontSize: 13, color: "var(--muted-foreground)", fontFamily: "var(--font-gilroy)", flexShrink: 0 }}>
+                  {filteredAllLooks.length} look{filteredAllLooks.length !== 1 ? "s" : ""}
+                </span>
+              )}
+            </div>
 
           {/* Shimmer skeleton */}
           {looksLoading && (() => {
@@ -2955,20 +3022,24 @@ function GalleryScreen({ goTo, goBack, cartCount, showToast, addItem, setSelecte
               const blank = (cls: string) => <div className={`lbk-slot ${cls}`} style={{ background: tokens.surfaceBg }} />;
 
               /* Editorial image card — sits in the s1 slot of the first block only */
-              const EditorialImageCard = (
-                <div className="lbk-slot lbk-s1" style={{ position: "relative", overflow: "hidden" }}>
-                  <img
-                    src="https://images.unsplash.com/photo-1589163045730-40797c5cdc6e?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxtb2Rlcm4lMjB6ZW4lMjBpbnRlcmlvciUyMGRlc2lnbiUyMG1vb2QlMjBlZGl0b3JpYWx8ZW58MXx8fHwxNzcyNzg3NDIyfDA&ixlib=rb-4.1.0&q=80&w=1080"
-                    alt="Style DNA"
-                    style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
-                  />
-                  <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to top, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.18) 50%, rgba(0,0,0,0.02) 72%)" }} />
-                  <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "12px 14px 14px" }}>
-                    <div style={{ fontFamily: "var(--font-roboto)", fontSize: 10, fontWeight: 600, color: "rgba(255,255,255,0.62)", textTransform: "uppercase" as const, letterSpacing: "0.08em", marginBottom: 3 }}>Your Style DNA</div>
-                    <div style={{ fontFamily: "var(--font-gilroy)", fontSize: 14, fontWeight: 700, color: "white", lineHeight: 1.2, marginBottom: 8 }}>{galleryProfile.primary}</div>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span style={{ fontFamily: "var(--font-roboto)", fontSize: 11, color: "rgba(255,255,255,0.75)" }}>{galleryProfile.tagline}</span>
-                      <div style={{ width: 28, height: 28, borderRadius: "50%", border: "1.5px solid rgba(255,255,255,0.52)", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: 12, flexShrink: 0, marginLeft: 8 }}>→</div>
+              /* Match my Look card — replaces the non-interactive editorial slot */
+              const MatchMyLookCard = (
+                <div
+                  className="lbk-slot lbk-s1"
+                  onClick={() => { setMatchUploadedImg(null); setMatchResults(null); setShowMatchMyLook(true); }}
+                  style={{ position: "relative", overflow: "hidden", cursor: "pointer", background: "linear-gradient(135deg, #1A1A2E 0%, #16213E 50%, #0F3460 100%)" }}
+                >
+                  {/* Subtle decorative blobs */}
+                  <div style={{ position: "absolute", top: -20, right: -20, width: 100, height: 100, borderRadius: "50%", background: "rgba(235,89,95,0.18)", filter: "blur(24px)" }} />
+                  <div style={{ position: "absolute", bottom: 10, left: -10, width: 80, height: 80, borderRadius: "50%", background: "rgba(107,79,160,0.22)", filter: "blur(20px)" }} />
+                  {/* Content */}
+                  <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "16px 14px", textAlign: "center" }}>
+                    <div style={{ width: 52, height: 52, borderRadius: "50%", background: "rgba(255,255,255,0.08)", border: "1.5px solid rgba(255,255,255,0.18)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 12, fontSize: 22 }}>📸</div>
+                    <div style={{ fontFamily: "var(--font-gilroy)", fontSize: 15, fontWeight: 700, color: "white", lineHeight: 1.3, marginBottom: 6 }}>Match My Look</div>
+                    <div style={{ fontFamily: "var(--font-roboto)", fontSize: 11, color: "rgba(255,255,255,0.62)", lineHeight: 1.5, marginBottom: 14 }}>Upload a photo — we'll find looks that match your vibe</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, background: tokens.primaryDefault, borderRadius: 20, padding: "7px 16px" }}>
+                      <span style={{ fontSize: 11, color: "white", fontWeight: 600, fontFamily: "var(--font-roboto)" }}>Upload Image</span>
+                      <span style={{ color: "white", fontSize: 12 }}>→</span>
                     </div>
                   </div>
                 </div>
@@ -2978,7 +3049,7 @@ function GalleryScreen({ goTo, goBack, cartCount, showToast, addItem, setSelecte
                 <div key={bi} className="lbk-block">
                   <div className="lbk-hero"><LookCard l={hero} isHero /></div>
                   {useEditorial
-                    ? EditorialImageCard
+                    ? MatchMyLookCard
                     : s1 ? <div className="lbk-slot lbk-s1"><LookCard l={s1} /></div> : blank("lbk-s1")}
                   {s2 ? <div className="lbk-slot lbk-s2"><LookCard l={s2} /></div> : blank("lbk-s2")}
                   {s3 ? <div className="lbk-slot lbk-s3"><LookCard l={s3} /></div> : blank("lbk-s3")}
@@ -2989,7 +3060,123 @@ function GalleryScreen({ goTo, goBack, cartCount, showToast, addItem, setSelecte
             }
             return <div style={{ paddingBottom: 48 }}>{blocks}</div>;
           })()}
-        </div>
+          </div>{/* end right panel */}
+        </div>{/* end two-column layout */}
+
+        {/* ── Match my Look modal overlay ── */}
+        {showMatchMyLook && (() => {
+          const handleFile = (file: File) => {
+            if (!file.type.startsWith("image/")) return;
+            const reader = new FileReader();
+            reader.onload = e => setMatchUploadedImg(e.target?.result as string);
+            reader.readAsDataURL(file);
+          };
+          const handleGenerate = async () => {
+            if (!matchUploadedImg) return;
+            setMatchLoading(true);
+            // Simulate AI matching delay then surface best-matching looks from existing data
+            await new Promise(r => setTimeout(r, 2200));
+            const shuffled = [...filteredAllLooks].sort(() => Math.random() - 0.5).slice(0, 6);
+            setMatchResults(shuffled);
+            setMatchLoading(false);
+          };
+          const close = () => { setShowMatchMyLook(false); setMatchUploadedImg(null); setMatchResults(null); setMatchLoading(false); };
+          return (
+            <div
+              style={{ position: "absolute", inset: 0, zIndex: 200, background: "rgba(0,0,0,0.62)", display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(4px)" }}
+              onClick={e => { if (e.target === e.currentTarget) close(); }}
+            >
+              <div style={{ background: "white", borderRadius: 20, width: matchResults ? 860 : 520, maxWidth: "90vw", maxHeight: "88vh", overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: "0 24px 64px rgba(0,0,0,0.28)" }}>
+                {/* Header */}
+                <div style={{ padding: "20px 24px 18px", borderBottom: "1px solid #F0F0F0", display: "flex", alignItems: "center", gap: 12 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: "50%", background: "linear-gradient(135deg,#1A1A2E,#0F3460)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>📸</div>
+                  <div>
+                    <div style={{ fontFamily: "'Poppins',sans-serif", fontSize: 16, fontWeight: 600, color: "#1A1A1A" }}>Match My Look</div>
+                    <div style={{ fontFamily: "var(--font-roboto)", fontSize: 12, color: "#888" }}>Upload a room photo to find matching looks</div>
+                  </div>
+                  <button onClick={close} style={{ marginLeft: "auto", width: 32, height: 32, border: "none", background: "#F5F5F5", borderRadius: "50%", cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center", color: "#666" }}>✕</button>
+                </div>
+
+                <div style={{ flex: 1, overflowY: "auto", padding: "24px" }}>
+                  {!matchResults ? (
+                    <>
+                      {/* Upload area */}
+                      {!matchUploadedImg ? (
+                        <div
+                          onDragOver={e => { e.preventDefault(); setMatchDragOver(true); }}
+                          onDragLeave={() => setMatchDragOver(false)}
+                          onDrop={e => { e.preventDefault(); setMatchDragOver(false); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
+                          style={{ border: `2px dashed ${matchDragOver ? tokens.primaryDefault : "#D8D8D8"}`, borderRadius: 14, padding: "48px 32px", textAlign: "center", background: matchDragOver ? tokens.primaryVariant : "#FAFAFA", transition: "all 0.18s", cursor: "pointer" }}
+                          onClick={() => (document.getElementById("mml-file-input") as HTMLInputElement)?.click()}
+                        >
+                          <div style={{ fontSize: 40, marginBottom: 14 }}>🖼️</div>
+                          <div style={{ fontFamily: "'Poppins',sans-serif", fontSize: 15, fontWeight: 600, color: "#1A1A1A", marginBottom: 6 }}>Drop your room photo here</div>
+                          <div style={{ fontFamily: "var(--font-roboto)", fontSize: 12, color: "#888", marginBottom: 20 }}>or click to browse — JPG, PNG, WEBP supported</div>
+                          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "#1A1A1A", color: "white", borderRadius: 8, padding: "10px 20px", fontSize: 13, fontWeight: 600, fontFamily: "var(--font-roboto)" }}>
+                            <span>Browse Files</span>
+                          </div>
+                          <input id="mml-file-input" type="file" accept="image/*" style={{ display: "none" }} onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
+                        </div>
+                      ) : (
+                        <div>
+                          {/* Preview */}
+                          <div style={{ borderRadius: 12, overflow: "hidden", height: 260, position: "relative", marginBottom: 20, background: "#F0F0F0" }}>
+                            <img src={matchUploadedImg} alt="Uploaded" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                            <button onClick={() => setMatchUploadedImg(null)} style={{ position: "absolute", top: 10, right: 10, width: 30, height: 30, borderRadius: "50%", border: "none", background: "rgba(0,0,0,0.55)", color: "white", cursor: "pointer", fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+                          </div>
+                          <button
+                            onClick={handleGenerate}
+                            disabled={matchLoading}
+                            style={{ width: "100%", padding: "14px 0", borderRadius: 10, border: "none", background: matchLoading ? "#CCC" : tokens.primaryDefault, color: "white", fontSize: 15, fontWeight: 700, fontFamily: "'Poppins',sans-serif", cursor: matchLoading ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}
+                          >
+                            {matchLoading ? (
+                              <>
+                                <span style={{ display: "inline-block", width: 18, height: 18, border: "2.5px solid rgba(255,255,255,0.4)", borderTopColor: "white", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+                                Analysing your space…
+                              </>
+                            ) : "✦ Find Matching Looks"}
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    /* Results */
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+                        <div style={{ width: 64, height: 48, borderRadius: 8, overflow: "hidden", flexShrink: 0 }}>
+                          <img src={matchUploadedImg!} alt="Your photo" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                        </div>
+                        <div>
+                          <div style={{ fontFamily: "'Poppins',sans-serif", fontSize: 14, fontWeight: 600, color: "#1A1A1A" }}>✦ Looks matched to your space</div>
+                          <div style={{ fontFamily: "var(--font-roboto)", fontSize: 12, color: "#888" }}>{matchResults.length} looks curated based on your photo</div>
+                        </div>
+                        <button onClick={() => { setMatchUploadedImg(null); setMatchResults(null); }} style={{ marginLeft: "auto", padding: "6px 14px", borderRadius: 20, border: `1.5px solid ${tokens.primaryDefault}`, background: "transparent", color: tokens.primaryDefault, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-roboto)" }}>Try another photo</button>
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 14 }}>
+                        {matchResults.map((l: any, i: number) => (
+                          <div
+                            key={i}
+                            onClick={() => { setSelectedLook({ ...l, room: selectedRoom }); goTo("explorer"); close(); }}
+                            style={{ borderRadius: 12, overflow: "hidden", cursor: "pointer", position: "relative", height: 180, background: "linear-gradient(135deg,#E8D8C4,#D4C0A8)" }}
+                          >
+                            {l.img && <img src={l.img} alt={l.name} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />}
+                            <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to top, rgba(0,0,0,0.78) 0%, rgba(0,0,0,0.04) 55%)" }} />
+                            <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "10px 12px 12px" }}>
+                              <div style={{ fontFamily: "var(--font-roboto)", fontSize: 9, fontWeight: 600, color: "rgba(255,255,255,0.6)", textTransform: "uppercase" as const, letterSpacing: "0.07em", marginBottom: 2 }}>{l.tag}</div>
+                              <div style={{ fontFamily: "var(--font-gilroy)", fontSize: 13, fontWeight: 700, color: "white", lineHeight: 1.2 }}>{l.name}</div>
+                              <div style={{ fontFamily: "var(--font-roboto)", fontSize: 12, fontWeight: 700, color: "white", marginTop: 4 }}>{l.price}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
         {/* See All Overlay (reuse mobile version) */}
         {seeAllSection && (() => {
           const sectionMeta: Record<"looks" | "trending" | "budget", { title: string; data: any[]; chips: string[]; activeChip: string; setChip: (c: string) => void }> = {
@@ -3771,6 +3958,8 @@ function ExplorerScreen({ goTo, goBack, cartCount, showToast, addItem, selectedL
   const [similarLooks, setSimilarLooks] = useState<any[]>([]);
   const [activeTier, setActiveTier] = useState<"eco" | "standard" | "premium">("standard");
   const [selectedAddons, setSelectedAddons] = useState<Set<string>>(new Set());
+  const [openFaqIdx, setOpenFaqIdx] = useState<number | null>(null);
+  const [materialExpanded, setMaterialExpanded] = useState(false);
 
   /* ── Moodboard ── */
   const [explorerTab, setExplorerTab] = useState<"items" | "moodboard">("moodboard");
@@ -4304,327 +4493,415 @@ function ExplorerScreen({ goTo, goBack, cartCount, showToast, addItem, selectedL
   /* ── Desktop Explorer Layout ── */
   if (isDesktop) {
     return (
-      <div style={{ flex: 1, display: "flex", background: tokens.onSurfaceDefault, overflow: "hidden", position: "relative" }}>
-        {/* Left: Room Carousel */}
-        <div style={{ width: "55%", height: "100%", position: "relative", flexShrink: 0, overflow: "hidden" }}>
-          <LookCarousel
-            mainImage={selectedLook?.img ?? ""}
-            lookName={selectedLook?.name}
-            room={selectedLook?.room ?? "living"}
-            height="100%"
-            showArrows
-            onSlideChange={() => {}}
-          >
-            {/* Top bar */}
-            <div style={{ position: "absolute", top: 0, left: 0, right: 0, padding: "28px 24px 20px", background: "linear-gradient(to bottom,rgba(0,0,0,0.52),transparent)", zIndex: 6, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <button onClick={() => goTo("gallery")} style={{ width: 40, height: 40, background: "rgba(255,255,255,0.2)", backdropFilter: "blur(8px)", border: "none", borderRadius: "50%", cursor: "pointer", color: "white", fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center" }}>←</button>
-              <div style={{ display: "flex", gap: 8 }}>
-                {(() => { const isWishlisted = wishlist?.some(w => w.name === selectedLook?.name) ?? false; return <button onClick={() => { if (selectedLook) toggleWishlist?.(selectedLook); }} style={{ width: 40, height: 40, background: isWishlisted ? tokens.primaryDefault : "rgba(255,255,255,0.18)", backdropFilter: "blur(8px)", border: "none", borderRadius: "50%", cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>{isWishlisted ? "❤️" : "🤍"}</button>; })()}
-                <button onClick={() => showToast("🔗 Link copied!")} style={{ width: 40, height: 40, background: "rgba(255,255,255,0.18)", backdropFilter: "blur(8px)", border: "none", borderRadius: "50%", cursor: "pointer", color: "white", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>↗</button>
-                <button onClick={() => goTo("cart")} style={{ width: 40, height: 40, background: "rgba(255,255,255,0.18)", backdropFilter: "blur(8px)", border: "none", borderRadius: "50%", cursor: "pointer", color: "white", fontSize: 15, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
-                  <ShoppingCart size={18} color="white" strokeWidth={2} />
-                  {cartCount > 0 && <div style={{ position: "absolute", top: -2, right: -2, width: 14, height: 14, background: tokens.primaryDefault, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 700, color: "white" }}>{cartCount}</div>}
-                </button>
-              </div>
-            </div>
-            {/* Hotspots — visible only when Items tab is active */}
-            {explorerTab === "items" && <div style={{ position: "absolute", inset: 0, zIndex: 5 }}><HotspotLayer /></div>}
-            {/* Bottom info overlay */}
-            <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "88px 28px 28px", background: "linear-gradient(to top,rgba(0,0,0,0.75),transparent)", zIndex: 6, pointerEvents: "none" }}>
-              <span style={{ display: "inline-block", background: "rgba(255,255,255,0.18)", backdropFilter: "blur(4px)", borderRadius: 5, padding: "3px 9px", fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.85)", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8 }}>{selectedLook?.tag ?? "Modern Zen"}</span>
-              <div style={{ fontFamily: "var(--font-gilroy)", fontSize: 32, fontWeight: "var(--font-weight-semibold)", color: "white", lineHeight: 1.15 }}>{selectedLook?.name ?? "Quiet Luxury"}</div>
-              <div style={{ display: "flex", gap: 18, marginTop: 10, alignItems: "center" }}>
-                <span style={{ fontSize: 13, color: "rgba(255,255,255,0.7)" }}>📦 {lookProducts.length > 0 ? `${lookProducts.length} items` : (selectedLook?.items ?? "…")}</span>
-                <span style={{ fontSize: 13, color: "rgba(255,255,255,0.7)" }}>🚚 45-day delivery</span>
-                <span style={{ fontSize: 20, fontWeight: 700, color: "white", marginLeft: "auto" }}>{selectedLook?.price ?? "₹2,14,000"}</span>
-              </div>
-            </div>
-          </LookCarousel>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", background: "#F5F5F5", overflow: "hidden", position: "relative" }}>
+        {/* Header */}
+        <div style={{ background: "white", borderBottom: "1px solid #EBEBEB", padding: "0 40px", height: 64, display: "flex", alignItems: "center", gap: 16, flexShrink: 0 }}>
+          <button onClick={() => goTo("gallery")} style={{ width: 36, height: 36, borderRadius: "50%", background: tokens.surfaceBg, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, color: tokens.onSurfaceDefault, flexShrink: 0 }}>←</button>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 18, fontWeight: 700, fontFamily: "var(--font-gilroy)", color: tokens.onSurfaceDefault }}>{selectedLook?.name ?? "Look"}</div>
+            <div style={{ fontSize: 11, color: tokens.onSurfaceSecondary }}>✦ LookBook · {selectedLook?.tag ?? ""}</div>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            {(() => { const isWishlisted = wishlist?.some(w => w.name === selectedLook?.name) ?? false; return <button onClick={() => { if (selectedLook) toggleWishlist?.(selectedLook); }} style={{ width: 36, height: 36, borderRadius: "50%", background: tokens.surfaceBg, border: "none", cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>{isWishlisted ? "❤️" : "🤍"}</button>; })()}
+            <button onClick={() => showToast("🔗 Link copied!")} style={{ width: 36, height: 36, borderRadius: "50%", background: tokens.surfaceBg, border: "none", cursor: "pointer", color: tokens.onSurfaceDefault, fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>↗</button>
+            <button onClick={() => goTo("cart")} style={{ width: 36, height: 36, borderRadius: "50%", background: tokens.surfaceBg, border: "none", cursor: "pointer", fontSize: 15, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
+              <ShoppingCart size={18} color={tokens.onSurfaceDefault} strokeWidth={2} />
+              {cartCount > 0 && <div style={{ position: "absolute", top: -2, right: -2, width: 14, height: 14, background: tokens.primaryDefault, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 700, color: "white" }}>{cartCount}</div>}
+            </button>
+          </div>
         </div>
 
-        {/* Right: Products + CTA */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", background: "#2C2C2C", overflow: "hidden" }}>
-          <div style={{ padding: "16px 20px 10px", flexShrink: 0 }}>
-            <TabBar />
-          </div>
-          {explorerTab === "items" && <div style={{ flex: 1, overflowY: "auto", padding: "0 20px 16px" }}>
-            {/* Items Grid */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, alignContent: "start" }}>
-            {productsLoading && [1,2,3,4].map(i => <div key={i} style={{ height: 160, borderRadius: 14, background: "linear-gradient(90deg,#3a3a3a 25%,#444 50%,#3a3a3a 75%)", backgroundSize: "200% 100%", animation: "shimmer 1.4s infinite" }} />)}
-            {items.map(it => {
-              const isSvc = SERVICE_CATEGORIES.has(it.category);
-              const isSelected = tappedHsId === it.id;
-              return (
-                <div
-                  key={it.id}
-                  onClick={() => setTappedHsId(isSelected ? null : it.id)}
-                  style={{
-                    background: tokens.surfaceDefault,
-                    borderRadius: 14,
-                    overflow: "hidden",
-                    cursor: "pointer",
-                    border: isSelected
-                      ? `2px solid var(--primary)`
-                      : `1.5px solid ${isSvc ? tokens.extendedMustard : tokens.surfaceVariant}`,
-                    boxShadow: isSelected ? "0 0 0 3px color-mix(in srgb, var(--primary) 15%, transparent)" : "none",
-                    transition: "border 0.15s, box-shadow 0.15s",
-                  }}
-                >
-                  <div style={{ height: 110, background: isSvc ? tokens.extendedMustard : (categoryBg[it.category] ?? tokens.surfaceBg), display: "flex", alignItems: "center", justifyContent: "center", fontSize: 34, overflow: "hidden", position: "relative" }}>
-                    {it.image_url ? <img src={it.image_url} alt={it.name} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} /> : <span>{categoryEmoji[it.category] ?? "📦"}</span>}
-                    {isSvc && <div style={{ position: "absolute", top: 6, left: 6, background: "#F19E2B", color: "white", fontSize: 8, fontWeight: 700, letterSpacing: "0.06em", borderRadius: 4, padding: "2px 5px" }}>SERVICE</div>}
-                    {isSelected && (
-                      <div style={{ position: "absolute", top: 6, right: 6, width: 20, height: 20, borderRadius: "50%", background: "var(--primary)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <svg width="10" height="8" viewBox="0 0 10 8" fill="none"><path d="M1 4l2.5 2.5L9 1" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                      </div>
-                    )}
+        {/* Scrollable body */}
+        <div style={{ flex: 1, overflowY: "auto", background: "#F5F5F5" }}>
+
+          {/* White hero band */}
+          <div style={{ background: "white" }}>
+            <div style={{ maxWidth: 1200, margin: "0 auto", padding: "32px 40px 40px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 440px", gap: 32, alignItems: "start" }}>
+
+                {/* Left: look image with hotspots */}
+                <div>
+                  <div style={{ position: "relative", borderRadius: 16, overflow: "hidden", background: "#1A1A1A", aspectRatio: "4/3" }}>
+                    <img src={selectedLook?.img ?? ""} alt={selectedLook?.name ?? "Look"} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                    {explorerTab === "items" && <div style={{ position: "absolute", inset: 0, zIndex: 5 }}><HotspotLayer /></div>}
+                    <div style={{ position: "absolute", top: 12, left: 12, zIndex: 6, background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", borderRadius: 6, padding: "3px 10px", fontSize: 10, fontWeight: 700, color: "white", textTransform: "uppercase" as const, letterSpacing: "0.07em" }}>{selectedLook?.tag}</div>
                   </div>
-                  <div style={{ padding: "10px 12px 12px" }}>
-                    <div style={{ fontSize: 12, color: tokens.onSurfaceDefault, lineHeight: 1.35, fontFamily: "var(--font-gilroy)" }}>{it.name}</div>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: tokens.onSurfaceDefault, marginTop: 4, fontFamily: "var(--font-gilroy)" }}>{isSvc ? "~" : ""}{fmt(it.price)}</div>
-                    <div style={{ display: "none", gap: 5, marginTop: 8 }}>
-                      <button onClick={e => { e.stopPropagation(); addItem(`${selectedLook?.id ?? ''}::${it.id}`, it.price, it.name, categoryEmoji[it.category] ?? "📦", it.category, selectedLook?.name, selectedLook?.room); }} style={{ flex: 1, height: 30, background: "var(--surface-variant, #E6E6E6)", color: "var(--foreground)", border: "none", borderRadius: "var(--radius-full, 9999px)", fontSize: 11, fontWeight: 500, fontFamily: "var(--font-gilroy)", cursor: "pointer" }}>{isSvc ? "📋 Enquire" : "🛒 Add"}</button>
-                      <button onClick={e => { e.stopPropagation(); setBsItem(it.id); setSelectedAlt(-1); }} style={{ width: 30, height: 30, background: "var(--surface-variant, #E6E6E6)", border: "none", borderRadius: "var(--radius-full, 9999px)", cursor: "pointer", fontSize: 12, display: "flex", alignItems: "center", justifyContent: "center" }}>⇄</button>
+                  {/* Thumbnail strip */}
+                  <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                    {/* Main look thumbnail (always first, always active) */}
+                    <div style={{ flex: "0 0 auto", height: 80, aspectRatio: "4/3", borderRadius: 10, overflow: "hidden", border: `2px solid ${tokens.primaryDefault}`, cursor: "pointer", position: "relative" }}>
+                      <img src={selectedLook?.img ?? ""} alt={selectedLook?.name ?? ""} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                    </div>
+                    {/* Similar looks as additional thumbnails */}
+                    {similarLooks.slice(0, 4).map(look => (
+                      <div key={look.id}
+                        onClick={() => setSelectedLook(look as SelectedLook)}
+                        style={{ flex: "0 0 auto", height: 80, aspectRatio: "4/3", borderRadius: 10, overflow: "hidden", border: `2px solid ${tokens.surfaceVariant}`, cursor: "pointer", position: "relative", transition: "border-color 0.15s" }}
+                        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.borderColor = tokens.primaryDefault; }}
+                        onMouseLeave={e => { (e.currentTarget as HTMLElement).style.borderColor = tokens.surfaceVariant; }}
+                      >
+                        {look.img
+                          ? <img src={look.img} alt={look.name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                          : <div style={{ width: "100%", height: "100%", background: "linear-gradient(135deg,#E8D8C4,#D4C0A8)" }} />}
+                        <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.18)" }} />
+                      </div>
+                    ))}
+                  </div>
+                  {/* Info note */}
+                  <div style={{ marginTop: 10, padding: "9px 12px", background: tokens.extendedBlue, borderRadius: 10, display: "flex", gap: 8, alignItems: "center" }}>
+                    <span style={{ fontSize: 13, flexShrink: 0 }}>ℹ️</span>
+                    <span style={{ fontSize: 11, color: tokens.onSurfaceSecondary, lineHeight: 1.5 }}>Select the <strong>Items</strong> tab on the right to explore all products in this look</span>
+                  </div>
+                </div>
+
+                {/* Right: details panel */}
+                <div style={{ alignSelf: "start" }}>
+                  <div style={{ padding: "4px 20px 16px" }}>
+                    {/* Name + price */}
+                    <div style={{ fontSize: 22, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 6 }}>{selectedLook?.name ?? "Look"}</div>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 4 }}>
+                      <span style={{ fontSize: 20, fontWeight: 700, color: tokens.primaryDefault }}>{displayPrice}</span>
+                    </div>
+                    <div style={{ fontSize: 12, color: tokens.onSurfaceSecondary, marginBottom: 16 }}>📦 {lookProducts.length > 0 ? `${lookProducts.length} items` : (selectedLook?.items ?? "…")} · 🚚 45-day delivery</div>
+
+                    {/* Tier selector */}
+                    <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+                      {([["eco", "💚 Eco", "Budget picks"] as const, ["standard", "⚡ Standard", "Best value"] as const, ["premium", "✨ Premium", "Top quality"] as const]).map(([tier, label, sub]) => (
+                        <button key={tier} onClick={() => setActiveTier(tier)}
+                          style={{ flex: 1, padding: "10px 6px", borderRadius: 10, border: `2px solid ${activeTier === tier ? tokens.primaryDefault : tokens.surfaceVariant}`, background: activeTier === tier ? tokens.primaryVariant : "white", cursor: "pointer", textAlign: "center" as const, transition: "all 0.15s" }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: activeTier === tier ? tokens.primaryDefault : tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)" }}>{label}</div>
+                          <div style={{ fontSize: 9, color: tokens.onSurfaceSecondary, marginTop: 2 }}>{sub}</div>
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Trust badge */}
+                    <div style={{ fontSize: 12, color: hasServiceItem ? "#A0620A" : tokens.tertiaryGreen, fontWeight: 500, textAlign: "center" as const, padding: "8px 12px", background: hasServiceItem ? tokens.extendedMustard + "99" : "rgba(218,236,222,0.8)", borderRadius: 8, marginBottom: 14 }}>
+                      {hasServiceItem ? "🏠 Touch & feel samples · Get your custom quote at home" : "✓ Ready to ship · 45-day delivery guarantee"}
+                    </div>
+
+                    {/* CTAs */}
+                    <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
+                      <button onClick={() => setShowARViewer(true)}
+                        style={{ flex: 1, height: 46, background: tokens.surfaceBg, border: `1px solid ${tokens.surfaceVariant}`, borderRadius: 10, fontFamily: "var(--font-gilroy)", fontSize: 13, fontWeight: 600, color: tokens.onSurfaceDefault, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                        👁️ Preview
+                      </button>
+                      <button onClick={() => { setShowBookingFlow(true); setBookingStep(1); }}
+                        style={{ flex: 1.6, height: 46, background: tokens.primaryDefault, border: "none", borderRadius: 10, fontFamily: "var(--font-gilroy)", fontSize: 14, fontWeight: 700, color: "white", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                        🗓️ Book Site Visit · ₹99
+                      </button>
+                    </div>
+
+                    {/* Tabs + content */}
+                    <div style={{ borderTop: `1px solid ${tokens.surfaceVariant}`, paddingTop: 16 }}>
+                      <div style={{ display: "flex", borderBottom: `1px solid ${tokens.surfaceVariant}`, marginBottom: 16 }}>
+                        {([["moodboard", "🎨 Moodboard"], ["items", "🛒 Items"]] as const).map(([key, label]) => (
+                          <button key={key} onClick={() => setExplorerTab(key)}
+                            style={{ flex: 1, height: 40, background: "none", border: "none", borderBottom: explorerTab === key ? `2.5px solid ${tokens.primaryDefault}` : "2.5px solid transparent", cursor: "pointer", fontSize: 13, fontWeight: explorerTab === key ? 700 : 400, fontFamily: "var(--font-gilroy)", color: explorerTab === key ? tokens.primaryDefault : tokens.onSurfaceSecondary, transition: "color 0.18s, border-color 0.18s", padding: "0 4px" }}>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      {explorerTab === "moodboard" && (
+                        <div style={{ background: "#2C2C2C", borderRadius: 16, padding: "16px 20px", maxHeight: 440, overflowY: "auto" }}>
+                          <MoodboardContent />
+                        </div>
+                      )}
+                      {explorerTab === "items" && (
+                        <div style={{ maxHeight: 440, overflowY: "auto" }}>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, alignContent: "start" }}>
+                            {productsLoading && [1,2,3,4].map(i => <div key={i} style={{ height: 160, borderRadius: 14, background: "linear-gradient(90deg,#F0F0F0 25%,#E8E8E8 50%,#F0F0F0 75%)", backgroundSize: "200% 100%", animation: "shimmer 1.4s infinite" }} />)}
+                            {items.map(it => {
+                              const isSvc = SERVICE_CATEGORIES.has(it.category);
+                              const isSelected = tappedHsId === it.id;
+                              return (
+                                <div key={it.id} onClick={() => { setBsItem(it.id); setSelectedAlt(0); }}
+                                  style={{ background: tokens.surfaceDefault, borderRadius: 14, overflow: "hidden", cursor: "pointer", border: isSelected ? `2px solid ${tokens.primaryDefault}` : `1.5px solid ${isSvc ? tokens.extendedMustard : tokens.surfaceVariant}`, boxShadow: isSelected ? "0 0 0 3px color-mix(in srgb, var(--primary) 15%, transparent)" : "none", transition: "border 0.15s, box-shadow 0.15s" }}>
+                                  <div style={{ height: 110, background: isSvc ? tokens.extendedMustard : (categoryBg[it.category] ?? tokens.surfaceBg), display: "flex", alignItems: "center", justifyContent: "center", fontSize: 34, overflow: "hidden", position: "relative" }}>
+                                    {it.image_url ? <img src={it.image_url} alt={it.name} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} /> : <span>{categoryEmoji[it.category] ?? "📦"}</span>}
+                                    {isSvc && <div style={{ position: "absolute", top: 6, left: 6, background: "#F19E2B", color: "white", fontSize: 8, fontWeight: 700, letterSpacing: "0.06em", borderRadius: 4, padding: "2px 5px" }}>SERVICE</div>}
+                                  </div>
+                                  <div style={{ padding: "10px 12px 12px" }}>
+                                    <div style={{ fontSize: 12, color: tokens.onSurfaceDefault, lineHeight: 1.35, fontFamily: "var(--font-gilroy)" }}>{it.name}</div>
+                                    <div style={{ fontSize: 14, fontWeight: 600, color: tokens.onSurfaceDefault, marginTop: 4, fontFamily: "var(--font-gilroy)" }}>{isSvc ? "~" : ""}{fmt(it.price)}</div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
-              );
-            })}
+              </div>
             </div>
+          </div>{/* end white hero band */}
 
-            {/* ── Add-ons Section (Desktop/Tablet) ── */}
-            {(() => {
-              const ADDONS = [
-                { id: "painting",   icon: "🖌️", label: "Wall Painting",       sub: "2 coats, premium emulsion", price: 18000 },
-                { id: "electrical", icon: "⚡", label: "Electrical Upgrades",  sub: "Modular switches & concealed wiring", price: 12500 },
-                { id: "curtains",   icon: "🪟", label: "Curtains & Blinds",    sub: "Custom-fit, fabric of choice", price: 22000 },
-                { id: "lighting",   icon: "💡", label: "Accent Lighting",      sub: "LED coves + pendant fixtures", price: 15000 },
-              ];
-              const ADDONS_PRICE: Record<string, number> = { painting: 18000, electrical: 12500, curtains: 22000, lighting: 15000 };
-              return (
-                <>
-                  <div style={{ height: 1, background: "rgba(255,255,255,0.08)", margin: "22px 0 18px" }} />
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-                    <div style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(255,255,255,0.4)", fontWeight: "var(--font-weight-semibold)", fontFamily: "var(--font-gilroy)" }}>Add-ons</div>
-                    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", fontFamily: "var(--font-gilroy)" }}>Optional extras</div>
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 6 }}>
+          {/* Add-ons */}
+          {(() => {
+            const ADDONS = [
+              { id: "painting",   icon: "🖌️", label: "Wall Painting",      sub: "2 coats, premium emulsion",          price: 18000 },
+              { id: "electrical", icon: "⚡", label: "Electrical Upgrades", sub: "Modular switches & concealed wiring", price: 12500 },
+              { id: "curtains",   icon: "🪟", label: "Curtains & Blinds",   sub: "Custom-fit, fabric of choice",       price: 22000 },
+              { id: "lighting",   icon: "💡", label: "Accent Lighting",     sub: "LED coves + pendant fixtures",       price: 15000 },
+            ];
+            const addonsTotal = [...selectedAddons].reduce((sum, id) => sum + (ADDONS.find(a => a.id === id)?.price ?? 0), 0);
+            return (
+              <div style={{ background: "white", padding: "32px 0" }}>
+                <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 40px" }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 6 }}>Add-ons</div>
+                  <div style={{ fontSize: 12, color: tokens.onSurfaceSecondary, marginBottom: 20 }}>Optional extras to complete the look</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14 }}>
                     {ADDONS.map(addon => {
                       const checked = selectedAddons.has(addon.id);
                       return (
-                        <div
-                          key={addon.id}
+                        <div key={addon.id}
                           onClick={() => setSelectedAddons(prev => { const next = new Set(prev); next.has(addon.id) ? next.delete(addon.id) : next.add(addon.id); return next; })}
-                          style={{ display: "flex", alignItems: "center", gap: 12, background: checked ? "rgba(235,89,95,0.10)" : "rgba(255,255,255,0.04)", border: `1.5px solid ${checked ? "var(--primary)" : "rgba(255,255,255,0.10)"}`, borderRadius: "var(--radius, 12px)", padding: "11px 14px", cursor: "pointer", transition: "all 0.16s ease" }}
-                        >
-                          <div style={{ width: 20, height: 20, borderRadius: 6, flexShrink: 0, background: checked ? "var(--primary)" : "transparent", border: `2px solid ${checked ? "var(--primary)" : "rgba(255,255,255,0.25)"}`, display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.16s ease" }}>
-                            {checked && <span style={{ color: "white", fontSize: 11, lineHeight: 1 }}>✓</span>}
+                          style={{ display: "flex", flexDirection: "column", gap: 10, background: checked ? tokens.primaryVariant : tokens.surfaceBg, border: `1.5px solid ${checked ? tokens.primaryDefault : tokens.surfaceVariant}`, borderRadius: 14, padding: "16px", cursor: "pointer", transition: "all 0.16s" }}>
+                          <span style={{ fontSize: 28 }}>{addon.icon}</span>
+                          <div>
+                            <div style={{ fontSize: 13, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 4 }}>{addon.label}</div>
+                            <div style={{ fontSize: 11, color: tokens.onSurfaceSecondary, lineHeight: 1.4 }}>{addon.sub}</div>
                           </div>
-                          <span style={{ fontSize: 20, flexShrink: 0 }}>{addon.icon}</span>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 12, fontWeight: "var(--font-weight-semibold)", color: checked ? "#fff" : "rgba(255,255,255,0.75)", fontFamily: "var(--font-gilroy)", lineHeight: 1.3 }}>{addon.label}</div>
-                            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", fontFamily: "var(--font-gilroy)", marginTop: 2, lineHeight: 1.3 }}>{addon.sub}</div>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                            <span style={{ fontSize: 14, fontWeight: 700, color: checked ? tokens.primaryDefault : tokens.onSurfaceDefault }}>+ ₹{addon.price.toLocaleString("en-IN")}</span>
+                            <div style={{ width: 20, height: 20, borderRadius: 6, background: checked ? tokens.primaryDefault : "transparent", border: `2px solid ${checked ? tokens.primaryDefault : tokens.surfaceVariant}`, display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.16s" }}>
+                              {checked && <span style={{ color: "white", fontSize: 11 }}>✓</span>}
+                            </div>
                           </div>
-                          <div style={{ fontSize: 12, fontWeight: "var(--font-weight-semibold)", color: checked ? "var(--primary)" : "rgba(255,255,255,0.5)", fontFamily: "var(--font-gilroy)", flexShrink: 0 }}>+{fmt(addon.price)}</div>
                         </div>
                       );
                     })}
                   </div>
-                  {selectedAddons.size > 0 && (
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "rgba(235,89,95,0.08)", border: "1px solid rgba(235,89,95,0.2)", borderRadius: "var(--radius, 12px)", padding: "10px 14px", marginTop: 4 }}>
-                      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", fontFamily: "var(--font-gilroy)" }}>{selectedAddons.size} add-on{selectedAddons.size > 1 ? "s" : ""} selected</div>
-                      <div style={{ fontSize: 13, fontWeight: "var(--font-weight-bold)", color: "var(--primary)", fontFamily: "var(--font-gilroy)" }}>+{fmt([...selectedAddons].reduce((s, id) => s + (ADDONS_PRICE[id] ?? 0), 0))}</div>
+                  {addonsTotal > 0 && (
+                    <div style={{ marginTop: 16, padding: "12px 16px", background: tokens.primaryVariant, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <span style={{ fontSize: 13, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", fontWeight: 500 }}>Add-ons total</span>
+                      <span style={{ fontSize: 15, fontWeight: 700, color: tokens.primaryDefault }}>+ ₹{addonsTotal.toLocaleString("en-IN")}</span>
                     </div>
                   )}
-                </>
-              );
-            })()}
-
-            {/* Similar Looks Section (Desktop/Tablet) */}
-            {similarLooks.length > 0 && (
-              <div style={{ marginTop: 20 }}>
-                <div style={{ height: 1, background: "rgba(255,255,255,0.08)", marginBottom: 18 }} />
-                <div style={{ 
-                  fontSize: 10, 
-                  letterSpacing: "0.12em", 
-                  textTransform: "uppercase", 
-                  color: "rgba(255,255,255,0.4)", 
-                  fontWeight: "var(--font-weight-semibold)", 
-                  fontFamily: "var(--font-gilroy)", 
-                  marginBottom: 14 
-                }}>
-                  Similar Looks
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 20 }}>
-                  {similarLooks.slice(0, 6).map((look) => (
-                    <div
-                      key={look.id}
-                      onClick={() => setSelectedLook(look as SelectedLook)}
-                      style={{ cursor: "pointer" }}
-                    >
-                      <div style={{
-                        aspectRatio: "1",
-                        borderRadius: "var(--radius-md, 10px)",
-                        overflow: "hidden",
-                        background: "rgba(255,255,255,0.06)",
-                        marginBottom: 7,
-                        border: "1px solid rgba(255,255,255,0.08)",
-                        position: "relative",
-                      }}>
-                        {look.img ? (
-                          <img
-                            src={look.img}
-                            alt={look.name}
-                            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
-                            onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                          />
-                        ) : (
-                          <div style={{ width: "100%", height: "100%", background: "linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02))" }} />
-                        )}
+              </div>
+            );
+          })()}
+
+          {/* ── Products & Accessories Used ── */}
+          {lookProducts.length > 0 && (
+            <div style={{ background: "#EDEEF7", padding: "64px 0" }}>
+              <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 40px" }}>
+                <div style={{ fontSize: 28, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 32 }}>Products &amp; accessories used</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 24 }}>
+                  {items.slice(0, 8).map(it => {
+                    const isSvc = SERVICE_CATEGORIES.has(it.category);
+                    return (
+                      <div key={it.id} onClick={() => { setBsItem(it.id); setSelectedAlt(0); }} style={{ cursor: "pointer" }}>
+                        <div style={{ height: 200, background: isSvc ? tokens.extendedMustard : (categoryBg[it.category] ?? "white"), borderRadius: 16, overflow: "hidden", marginBottom: 12, position: "relative" }}>
+                          {it.image_url
+                            ? <img src={it.image_url} alt={it.name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                            : <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", fontSize: 40 }}>{categoryEmoji[it.category] ?? "📦"}</div>}
+                          {isSvc && <div style={{ position: "absolute", top: 8, left: 0, background: "#F19E2B", color: "white", fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", borderRadius: "0 4px 4px 0", padding: "3px 8px" }}>SERVICE</div>}
+                        </div>
+                        <div style={{ fontSize: 14, fontWeight: 500, color: tokens.onSurfaceDefault, lineHeight: 1.4 }}>{it.name}</div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: tokens.onSurfaceDefault, marginTop: 4 }}>{isSvc ? "~" : ""}{fmt(it.price)}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── Watch Your Wall Being Transformed ── */}
+          <div style={{ background: "#42303F", padding: "64px 0" }}>
+            <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 40px" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 32 }}>
+                <div style={{ fontSize: 28, fontWeight: 700, color: "white", fontFamily: "var(--font-gilroy)", lineHeight: 1.3 }}>Watch your wall being transformed</div>
+                <button style={{ height: 36, padding: "0 16px", border: "1px solid white", borderRadius: 18, background: "none", color: "white", fontSize: 14, fontWeight: 500, fontFamily: "var(--font-gilroy)", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" as const }}>
+                  Watch More <span style={{ fontSize: 16 }}>›</span>
+                </button>
+              </div>
+              <div style={{ display: "flex", gap: 20, overflowX: "auto", scrollbarWidth: "none" } as React.CSSProperties}>
+                {[
+                  { label: "Before & After", sub: "Modern Concrete", bg: "#5A4A52" },
+                  { label: "Installation Day", sub: "Textured Wallpaper", bg: "#4A3A4A" },
+                  { label: "Time-lapse", sub: "Stone Cladding", bg: "#3A2A3A" },
+                  { label: "Customer Story", sub: "Fluted Panels", bg: "#4A3040" },
+                  { label: "Pro Tips", sub: "Geometric Tiles", bg: "#52404A" },
+                ].map(({ label, sub, bg }, i) => (
+                  <div key={i} style={{ flex: "0 0 auto", width: 220, height: 380, borderRadius: 16, background: bg, overflow: "hidden", position: "relative", cursor: "pointer" }}>
+                    <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to top, rgba(0,0,0,0.7) 0%, transparent 50%)" }} />
+                    <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "20px 16px" }}>
+                      <div style={{ width: 40, height: 40, borderRadius: "50%", background: "rgba(255,255,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 12 }}>
+                        <span style={{ color: "white", fontSize: 18 }}>▶</span>
+                      </div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: "white", lineHeight: 1.3, marginBottom: 4 }}>{label}</div>
+                      <div style={{ fontSize: 12, color: "rgba(255,255,255,0.65)" }}>{sub}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* ── Explore Similar Looks ── */}
+          {similarLooks.length > 0 && (
+            <div style={{ background: "white", padding: "64px 0" }}>
+              <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 40px" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 32 }}>
+                  <div style={{ fontSize: 28, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)" }}>Explore similar looks</div>
+                  <button onClick={() => { setPrevScreen("explorer"); setScreen("matched-looks"); }} style={{ background: "none", border: `1px solid ${tokens.primaryDefault}`, borderRadius: 18, padding: "8px 16px", color: tokens.primaryDefault, fontSize: 14, fontWeight: 600, fontFamily: "var(--font-gilroy)", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+                    See all <span style={{ fontSize: 16 }}>›</span>
+                  </button>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 24 }}>
+                  {similarLooks.slice(0, 4).map(look => (
+                    <div key={look.id} onClick={() => setSelectedLook(look as SelectedLook)} style={{ cursor: "pointer" }}>
+                      <div style={{ height: 200, borderRadius: 16, overflow: "hidden", background: tokens.surfaceBg, marginBottom: 12, position: "relative", border: `1px solid ${tokens.surfaceVariant}` }}>
+                        {look.img
+                          ? <img src={look.img} alt={look.name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                          : <div style={{ width: "100%", height: "100%", background: "linear-gradient(135deg,#E8D8C4,#D4C0A8)" }} />}
                         {look.tag && (
-                          <div style={{
-                            position: "absolute",
-                            bottom: 5,
-                            left: 5,
-                            background: "rgba(0,0,0,0.55)",
-                            backdropFilter: "blur(4px)",
-                            borderRadius: "var(--radius-sm, 4px)",
-                            padding: "2px 5px",
-                            fontSize: 8,
-                            color: "rgba(255,255,255,0.85)",
-                            fontWeight: "var(--font-weight-medium)",
-                            fontFamily: "var(--font-gilroy)",
-                            letterSpacing: "0.04em",
-                          }}>
-                            {look.tag}
-                          </div>
+                          <div style={{ position: "absolute", top: 10, left: 0, background: "#5F2356", color: "white", fontSize: 11, fontWeight: 600, padding: "3px 10px 3px 8px", borderRadius: "0 4px 4px 0" }}>{look.tag}</div>
                         )}
+                        <button style={{ position: "absolute", top: 8, right: 8, width: 32, height: 32, borderRadius: "50%", background: "white", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "0 1px 4px rgba(0,0,0,0.2)", fontSize: 15 }} onClick={e => { e.stopPropagation(); toggleWishlist?.(look); }}>
+                          {wishlist?.some(w => w.id === look.id) ? "❤️" : "🤍"}
+                        </button>
                       </div>
-                      <div style={{
-                        fontSize: 10,
-                        color: "rgba(255,255,255,0.65)",
-                        fontFamily: "var(--font-gilroy)",
-                        fontWeight: "var(--font-weight-medium)",
-                        lineHeight: 1.3,
-                        overflow: "hidden",
-                        display: "-webkit-box",
-                        WebkitLineClamp: 2,
-                        WebkitBoxOrient: "vertical",
-                      }}>
-                        {look.name}
-                      </div>
+                      <div style={{ fontSize: 12, color: tokens.onSurfaceSecondary, marginBottom: 4 }}>{look.room ?? ""}</div>
+                      <div style={{ fontSize: 15, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 4 }}>{look.name}</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: tokens.onSurfaceDefault }}>{look.price}</div>
                     </div>
                   ))}
                 </div>
               </div>
-            )}
-          </div>}
-          
-          {explorerTab === "items" && (
-            <div style={{ display: "none", gap: 10, padding: "20px 20px 16px" }}>
-              <button 
-                onClick={() => setShowARViewer(true)}
-                style={{ 
-                  flex: 1, 
-                  background: "var(--surface-variant, #E6E6E6)", 
-                  color: tokens.onSurfaceDefault, 
-                  border: "none", 
-                  borderRadius: 99, 
-                  height: 44, 
-                  fontSize: 13, 
-                  fontWeight: "var(--font-weight-semibold)", 
-                  fontFamily: "var(--font-roboto)", 
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: 6
-                }}
-              >
-                🛋️ Preview
-              </button>
-              <button 
-                onClick={async () => {
-                  if (!selectedLook?.img || !moodboardData) {
-                    if (!moodboardData) await fetchMoodboard();
-                  }
-                  if (moodboardData) {
-                    const { palette, materials, principles } = moodboardData;
-                    setLookSimilarityData({
-                      sourceImage: selectedLook?.img,
-                      sourceName: selectedLook?.name,
-                      detectedRoom: selectedLook?.room,
-                      palette,
-                      materials,
-                      principles
-                    });
-                    setPrevScreen("explorer");
-                    setScreen("matched-looks");
-                  }
-                }}
-                style={{ 
-                  flex: 1, 
-                  background: "var(--surface-variant, #E6E6E6)", 
-                  color: tokens.onSurfaceDefault, 
-                  border: "none", 
-                  borderRadius: 99, 
-                  height: 44, 
-                  fontSize: 13, 
-                  fontWeight: "var(--font-weight-semibold)", 
-                  fontFamily: "var(--font-roboto)", 
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: 6
-                }}
-              >
-                🔍 View Similar
-              </button>
             </div>
           )}
-          {/* Moodboard Tab Content (Desktop) */}
-          {explorerTab === "moodboard" && (
-            <div style={{ flex: 1, overflowY: "auto", padding: "4px 20px 16px" }}>
-              <MoodboardContent />
-            </div>
-          )}
-          {/* Sticky CTA */}
-          <div style={{ background: "white", borderTop: "1px solid #EBEBEB", padding: "10px 20px 20px", flexShrink: 0 }}>
-            {hasServiceItem
-              ? <div style={{ fontSize: 12, color: "#A0620A", fontWeight: 500, textAlign: "center", padding: "8px 0 9px", background: tokens.extendedMustard + "99", borderRadius: 8, marginBottom: 8 }}>🏠 Touch &amp; feel samples · Get your custom quote at home</div>
-              : <div style={{ fontSize: 12, color: tokens.tertiaryGreen, fontWeight: 500, textAlign: "center", padding: "8px 0 9px", background: "rgba(218,236,222,0.8)", borderRadius: 8, marginBottom: 8 }}>✓ Ready to ship · 45-day delivery guarantee</div>}
-            <div style={{ display: "flex", gap: 10 }}>
-              {/* Preview button */}
-              <button
-                onClick={() => {
-                  // Preview functionality - you can customize this behavior
-                  showToast("👁️ Preview mode");
-                }}
-                style={{ flex: 1, background: "var(--muted)", color: "var(--foreground)", border: "none", borderRadius: "var(--radius-full, 9999px)", height: 48, fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)", fontFamily: "var(--font-gilroy)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                👁️ Preview
-              </button>
-              {/* Hidden: add only shoppable (non-service) items to cart */}
-              <button
-                onClick={() => {
-                  const shoppable = items.filter(it => !SERVICE_CATEGORIES.has(it.category));
-                  if (shoppable.length === 0) { showToast("ℹ️ No ready-to-ship items in this look"); return; }
-                  shoppable.forEach(it => addItem(`${selectedLook?.id ?? ''}::${it.id}`, it.price, it.name, categoryEmoji[it.category] ?? "📦", it.category, selectedLook?.name, selectedLook?.room));
-                  showToast(`✓ ${shoppable.length} item${shoppable.length !== 1 ? "s" : ""} added to cart!`);
-                  goTo("cart");
-                }}
-                style={{ flex: 1, background: "var(--surface-variant, #E6E6E6)", color: "var(--foreground)", border: "none", borderRadius: "var(--radius-full, 9999px)", height: 48, fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)", fontFamily: "var(--font-gilroy)", cursor: "pointer", display: "none", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                🛒 Add all to cart
-              </button>
-              {/* Primary: Book Site Visit — always shown for all looks */}
-              <button
-                onClick={() => { setShowBookingFlow(true); setBookingStep(1); }}
-                style={{ flex: 1.55, background: "var(--primary)", color: "var(--primary-foreground)", border: "none", borderRadius: "var(--radius-full, 9999px)", height: 48, fontSize: "var(--text-sm)", fontWeight: "var(--font-weight-medium)", fontFamily: "var(--font-gilroy)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                Book Site Visit for ₹99
-              </button>
+
+          {/* ── Why Choose Livspace ── */}
+          <div style={{ background: tokens.surfaceBg, padding: "64px 0" }}>
+            <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 40px" }}>
+              <div style={{ fontSize: 28, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 40 }}>Why Choose Livspace</div>
+              <div style={{ display: "flex", gap: 24, justifyContent: "space-between" }}>
+                {[
+                  { icon: "⏱️", title: "60 Minute Delivery", desc: "Get your order delivered within an hour" },
+                  { icon: "👥", title: "50,000+", desc: "Customers\nserved" },
+                  { icon: "😊", title: "99%", desc: "Satisfaction\nrate" },
+                  { icon: "✅", title: "Livspace Assured", desc: "Quality guaranteed by trusted experts" },
+                  { icon: "🔧", title: "Installation Services", desc: "Professional installation available" },
+                ].map(({ icon, title, desc }) => (
+                  <div key={title} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: 12 }}>
+                    <div style={{ width: 80, height: 80, borderRadius: 12, background: "linear-gradient(220deg, #BC474C 3%, #EB595F 96%)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 36 }}>
+                      {icon}
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 18, fontWeight: 600, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 4 }}>{title}</div>
+                      <div style={{ fontSize: 14, color: tokens.onSurfaceSecondary, lineHeight: 1.5, whiteSpace: "pre-line" as const }}>{desc}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
-        </div>
+
+          {/* ── Customer Reviews ── */}
+          <div style={{ background: tokens.surfaceBg, padding: "64px 0" }}>
+            <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 40px" }}>
+              <div style={{ fontSize: 28, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 32 }}>Customer Reviews (548)</div>
+              {/* Summary row */}
+              <div style={{ display: "flex", gap: 24, marginBottom: 32 }}>
+                {/* Ratings breakdown */}
+                <div style={{ flex: 1, background: "white", border: `1px solid ${tokens.onSurfaceBorder}`, borderRadius: 16, padding: 24, display: "flex", gap: 24, alignItems: "center" }}>
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                    <div style={{ fontSize: 44, fontWeight: 700, color: tokens.onSurfaceDefault, lineHeight: 1 }}>4.7</div>
+                    <div style={{ display: "flex", gap: 2 }}>
+                      {[1,2,3,4].map(s => <span key={s} style={{ fontSize: 28, color: "#FFBB33" }}>★</span>)}
+                      <span style={{ fontSize: 28, color: "#FFBB33" }}>★</span>
+                    </div>
+                    <div style={{ fontSize: 16, fontWeight: 600, color: tokens.onSurfaceDefault }}>548 reviews</div>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {[{ stars: 5, pct: 81 }, { stars: 4, pct: 15 }, { stars: 3, pct: 2 }, { stars: 2, pct: 2 }, { stars: 1, pct: 0 }].map(({ stars, pct }) => (
+                      <div key={stars} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: 13, color: tokens.onSurfaceDefault, width: 10, textAlign: "right" as const }}>{stars}</span>
+                        <div style={{ width: 140, height: 8, borderRadius: 99, background: tokens.surfaceVariant, overflow: "hidden" }}>
+                          <div style={{ height: "100%", width: `${pct}%`, background: "#F19E2B", borderRadius: 99 }} />
+                        </div>
+                        <span style={{ fontSize: 13, color: tokens.onSurfaceSecondary, width: 28 }}>{pct}%</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                {/* Google avg */}
+                <div style={{ width: 360, background: "white", border: `1px solid ${tokens.onSurfaceBorder}`, borderRadius: 16, padding: 24, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                  <div style={{ fontSize: 13, color: tokens.onSurfaceSecondary }}>Average Ratings</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div style={{ fontSize: 36, fontWeight: 700, color: tokens.onSurfaceDefault }}>4.7</div>
+                    <div style={{ display: "flex", gap: 2 }}>
+                      {[1,2,3,4,5].map(s => <span key={s} style={{ fontSize: 28, color: s <= 4 ? "#FFBB33" : "#CCCCCC" }}>★</span>)}
+                    </div>
+                  </div>
+                  <div style={{ width: "100%", height: 1, background: tokens.surfaceVariant, margin: "4px 0" }} />
+                  <div style={{ fontSize: 20, fontWeight: 700, color: tokens.onSurfaceDefault }}>3,640 reviews</div>
+                </div>
+              </div>
+              {/* Review cards */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 16, marginBottom: 32 }}>
+                {[
+                  { title: "Good fabric quality", text: "The material feels thick and long lasting. Worth the price.", reviewer: "Aishwarya & Harsh", meta: "Certified Buyer, Bangalore, 5 months ago", stars: 5 },
+                  { title: "Stunning transformation", text: "Our living room looks completely different. The installation team was prompt and clean.", reviewer: "Rahul M.", meta: "Certified Buyer, Mumbai, 3 months ago", stars: 5 },
+                  { title: "Great design, quick install", text: "The wall design matches the sample perfectly. Very satisfied with the outcome.", reviewer: "Pooja S.", meta: "Certified Buyer, Hyderabad, 6 months ago", stars: 5 },
+                ].map(({ title, text, reviewer, meta, stars }) => (
+                  <div key={reviewer} style={{ background: "white", border: `1px solid ${tokens.onSurfaceBorder}`, borderRadius: 16, padding: "20px 24px" }}>
+                    <div style={{ display: "flex", gap: 2, marginBottom: 12 }}>
+                      {[1,2,3,4,5].map(s => <span key={s} style={{ fontSize: 18, color: s <= stars ? "#FFBB33" : tokens.surfaceVariant }}>★</span>)}
+                    </div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: tokens.onSurfaceDefault, marginBottom: 6 }}>{title}</div>
+                    <div style={{ fontSize: 15, color: tokens.onSurfaceDefault, lineHeight: 1.55, marginBottom: 14 }}>{text}</div>
+                    <div style={{ width: 52, height: 1, background: tokens.onSurfaceBorder, marginBottom: 10 }} />
+                    <div style={{ fontSize: 12, fontWeight: 600, fontStyle: "italic", color: tokens.onSurfaceDefault, marginBottom: 3 }}>{reviewer}</div>
+                    <div style={{ fontSize: 11, color: tokens.onSurfaceSecondary }}>{meta}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: "flex", justifyContent: "center" }}>
+                <button style={{ height: 36, padding: "0 20px", border: `1px solid ${tokens.primaryDefault}`, borderRadius: 18, background: "none", color: tokens.primaryDefault, fontSize: 14, fontWeight: 600, fontFamily: "var(--font-gilroy)", cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                  Load More <span style={{ fontSize: 16 }}>⌄</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* ── FAQ ── */}
+          <div style={{ background: "white", padding: "64px 0" }}>
+            <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 40px" }}>
+              <div style={{ fontSize: 28, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 8 }}>Frequently Asked Questions</div>
+              <div style={{ fontSize: 14, color: tokens.onSurfaceSecondary, marginBottom: 24 }}>Everything you need to know about our looks and installation</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                {[
+                  { q: "Can I order samples before placing the full look order?", a: "Yes, we offer physical samples of all our wall materials. Contact your designer or request samples through the Book Site Visit flow." },
+                  { q: "What happens if the materials arrive in a damaged condition?", a: "We replace damaged materials free of charge. Our team will coordinate collection and delivery within 48 hours of a reported issue." },
+                  { q: "What is the quality level of the products?", a: "All products in our looks are curated from vetted suppliers. Each carries at minimum a 1-year manufacturer warranty and a 10-year Livspace structural warranty." },
+                  { q: "How long does the installation take?", a: "Most installations are completed in 1–2 days depending on the area. Our project manager will confirm the exact timeline after the site visit." },
+                  { q: "Can I customise the look — colours, materials, or layout?", a: "Absolutely. Our designers will tailor every aspect of the look to match your space and preferences at the site visit." },
+                ].map(({ q, a }, i) => (
+                  <div key={i} style={{ background: tokens.surfaceBg, borderRadius: 4, boxShadow: "0 1px 3px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06)" }}>
+                    <div
+                      onClick={() => setOpenFaqIdx(p => p === i ? null : i)}
+                      style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", cursor: "pointer" }}
+                    >
+                      <div style={{ fontSize: 15, fontWeight: 600, color: tokens.onSurfaceDefault, lineHeight: 1.4, flex: 1, paddingRight: 16 }}>{q}</div>
+                      <span style={{ fontSize: 20, color: tokens.onSurfaceDefault, flexShrink: 0, transform: openFaqIdx === i ? "rotate(45deg)" : "none", transition: "transform 0.2s", display: "inline-block" }}>+</span>
+                    </div>
+                    {openFaqIdx === i && (
+                      <div style={{ padding: "0 16px 16px", fontSize: 14, color: tokens.onSurfaceSecondary, lineHeight: 1.6 }}>{a}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+        </div>{/* end scrollable body */}
 
         {/* Bottom Sheet (shared) */}
         {bsItem && currentItem && (() => {
@@ -4656,6 +4933,7 @@ function ExplorerScreen({ goTo, goBack, cartCount, showToast, addItem, selectedL
             </div>
           );
         })()}
+
         {/* Booking Flow (shared) */}
         {showBookingFlow && (
           <div onClick={e => { if (e.target === e.currentTarget) closeBooking(); }} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -4703,7 +4981,7 @@ function ExplorerScreen({ goTo, goBack, cartCount, showToast, addItem, selectedL
   }
 
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", background: tokens.onSurfaceDefault, overflow: "hidden", position: "relative" }}>
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", background: tokens.surfaceDefault, overflow: "hidden", position: "relative" }}>
       {/* Scrollable container */}
       <div ref={itemsScrollRef} style={{ flex: 1, overflowY: "auto", WebkitOverflowScrolling: "touch", transform: "translateZ(0)" }}>
         {/* Room Visual — Carousel */}
@@ -4792,9 +5070,9 @@ function ExplorerScreen({ goTo, goBack, cartCount, showToast, addItem, selectedL
         </div>
 
         {/* Tab bar + content */}
-        <div style={{ minHeight: "calc(100vh - 180px)", background: "#333333", paddingBottom: 160 }}>
+        <div style={{ minHeight: "calc(100vh - 180px)", background: tokens.surfaceDefault, paddingBottom: 160 }}>
           {/* Tab switcher pinned at top */}
-          <div style={{ position: "sticky", top: 0, zIndex: 15, background: "#333333", padding: "12px 22px 8px" }}>
+          <div style={{ position: "sticky", top: 0, zIndex: 15, background: tokens.surfaceDefault, padding: "12px 22px 8px", borderBottom: `1px solid ${tokens.surfaceVariant}` }}>
           <TabBar compact />
         </div>
 
@@ -4804,7 +5082,7 @@ function ExplorerScreen({ goTo, goBack, cartCount, showToast, addItem, selectedL
               <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: tokens.onSurfaceDisabled, padding: "12px 0 8px", fontWeight: 500 }}>Tap ● on room or browse items</div>
             {productsLoading && (
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                {[1,2,3,4].map(i => <div key={i} style={{ height: 140, borderRadius: 14, background: "linear-gradient(90deg,#3a3a3a 25%,#444 50%,#3a3a3a 75%)", backgroundSize: "200% 100%", animation: "shimmer 1.4s infinite" }} />)}
+                {[1,2,3,4].map(i => <div key={i} style={{ height: 140, borderRadius: 14, background: "linear-gradient(90deg,#F0F0F0 25%,#E8E8E8 50%,#F0F0F0 75%)", backgroundSize: "200% 100%", animation: "shimmer 1.4s infinite" }} />)}
               </div>
             )}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -4848,10 +5126,10 @@ function ExplorerScreen({ goTo, goBack, cartCount, showToast, addItem, selectedL
                 const ADDONS_PRICE: Record<string, number> = { painting: 18000, electrical: 12500, curtains: 22000, lighting: 15000 };
                 return (
                   <>
-                    <div style={{ height: 1, background: "rgba(255,255,255,0.08)", margin: "22px 0 18px" }} />
+                    <div style={{ height: 1, background: tokens.surfaceVariant, margin: "22px 0 18px" }} />
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-                      <div style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(255,255,255,0.4)", fontWeight: "var(--font-weight-semibold)", fontFamily: "var(--font-gilroy)" }}>Add-ons</div>
-                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", fontFamily: "var(--font-gilroy)" }}>Optional extras</div>
+                      <div style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: tokens.onSurfaceSecondary, fontWeight: "var(--font-weight-semibold)", fontFamily: "var(--font-gilroy)" }}>Add-ons</div>
+                      <div style={{ fontSize: 10, color: tokens.onSurfaceDisabled, fontFamily: "var(--font-gilroy)" }}>Optional extras</div>
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 6 }}>
                       {ADDONS.map(addon => {
@@ -4860,25 +5138,25 @@ function ExplorerScreen({ goTo, goBack, cartCount, showToast, addItem, selectedL
                           <div
                             key={addon.id}
                             onClick={() => setSelectedAddons(prev => { const next = new Set(prev); next.has(addon.id) ? next.delete(addon.id) : next.add(addon.id); return next; })}
-                            style={{ display: "flex", alignItems: "center", gap: 12, background: checked ? "rgba(235,89,95,0.10)" : "rgba(255,255,255,0.04)", border: `1.5px solid ${checked ? "var(--primary)" : "rgba(255,255,255,0.10)"}`, borderRadius: "var(--radius, 12px)", padding: "11px 14px", cursor: "pointer", transition: "all 0.16s ease" }}
+                            style={{ display: "flex", alignItems: "center", gap: 12, background: checked ? tokens.primaryVariant : tokens.surfaceBg, border: `1.5px solid ${checked ? tokens.primaryDefault : tokens.surfaceVariant}`, borderRadius: "var(--radius, 12px)", padding: "11px 14px", cursor: "pointer", transition: "all 0.16s ease" }}
                           >
-                            <div style={{ width: 20, height: 20, borderRadius: 6, flexShrink: 0, background: checked ? "var(--primary)" : "transparent", border: `2px solid ${checked ? "var(--primary)" : "rgba(255,255,255,0.25)"}`, display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.16s ease" }}>
+                            <div style={{ width: 20, height: 20, borderRadius: 6, flexShrink: 0, background: checked ? tokens.primaryDefault : "transparent", border: `2px solid ${checked ? tokens.primaryDefault : tokens.onSurfaceBorder}`, display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.16s ease" }}>
                               {checked && <span style={{ color: "white", fontSize: 11, lineHeight: 1 }}>✓</span>}
                             </div>
                             <span style={{ fontSize: 20, flexShrink: 0 }}>{addon.icon}</span>
                             <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontSize: 12, fontWeight: "var(--font-weight-semibold)", color: checked ? "#fff" : "rgba(255,255,255,0.75)", fontFamily: "var(--font-gilroy)", lineHeight: 1.3 }}>{addon.label}</div>
-                              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", fontFamily: "var(--font-gilroy)", marginTop: 2, lineHeight: 1.3 }}>{addon.sub}</div>
+                              <div style={{ fontSize: 12, fontWeight: "var(--font-weight-semibold)", color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", lineHeight: 1.3 }}>{addon.label}</div>
+                              <div style={{ fontSize: 10, color: tokens.onSurfaceSecondary, fontFamily: "var(--font-gilroy)", marginTop: 2, lineHeight: 1.3 }}>{addon.sub}</div>
                             </div>
-                            <div style={{ fontSize: 12, fontWeight: "var(--font-weight-semibold)", color: checked ? "var(--primary)" : "rgba(255,255,255,0.5)", fontFamily: "var(--font-gilroy)", flexShrink: 0 }}>+{fmt(addon.price)}</div>
+                            <div style={{ fontSize: 12, fontWeight: "var(--font-weight-semibold)", color: checked ? tokens.primaryDefault : tokens.onSurfaceSecondary, fontFamily: "var(--font-gilroy)", flexShrink: 0 }}>+{fmt(addon.price)}</div>
                           </div>
                         );
                       })}
                     </div>
                     {selectedAddons.size > 0 && (
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "rgba(235,89,95,0.08)", border: "1px solid rgba(235,89,95,0.2)", borderRadius: "var(--radius, 12px)", padding: "10px 14px", marginTop: 4 }}>
-                        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", fontFamily: "var(--font-gilroy)" }}>{selectedAddons.size} add-on{selectedAddons.size > 1 ? "s" : ""} selected</div>
-                        <div style={{ fontSize: 13, fontWeight: "var(--font-weight-bold)", color: "var(--primary)", fontFamily: "var(--font-gilroy)" }}>+{fmt([...selectedAddons].reduce((s, id) => s + (ADDONS_PRICE[id] ?? 0), 0))}</div>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: tokens.primaryVariant, border: `1px solid ${tokens.primaryDefault}33`, borderRadius: "var(--radius, 12px)", padding: "10px 14px", marginTop: 4 }}>
+                        <div style={{ fontSize: 11, color: tokens.onSurfaceSecondary, fontFamily: "var(--font-gilroy)" }}>{selectedAddons.size} add-on{selectedAddons.size > 1 ? "s" : ""} selected</div>
+                        <div style={{ fontSize: 13, fontWeight: "var(--font-weight-bold)", color: tokens.primaryDefault, fontFamily: "var(--font-gilroy)" }}>+{fmt([...selectedAddons].reduce((s, id) => s + (ADDONS_PRICE[id] ?? 0), 0))}</div>
                       </div>
                     )}
                   </>
@@ -4888,14 +5166,14 @@ function ExplorerScreen({ goTo, goBack, cartCount, showToast, addItem, selectedL
               {/* ── Similar Looks Section (Mobile) ── */}
               {similarLooks.length > 0 && (
                 <>
-                  <div style={{ height: 1, background: "rgba(255,255,255,0.08)", margin: "22px 0 18px" }} />
+                  <div style={{ height: 1, background: tokens.surfaceVariant, margin: "22px 0 18px" }} />
                   {/* Heading row */}
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
                     <div style={{
                       fontSize: 10,
                       letterSpacing: "0.12em",
                       textTransform: "uppercase",
-                      color: "rgba(255,255,255,0.4)",
+                      color: tokens.onSurfaceSecondary,
                       fontWeight: "var(--font-weight-semibold)",
                       fontFamily: "var(--font-gilroy)",
                     }}>
@@ -4945,9 +5223,9 @@ function ExplorerScreen({ goTo, goBack, cartCount, showToast, addItem, selectedL
                           aspectRatio: "1",
                           borderRadius: "var(--radius-md, 10px)",
                           overflow: "hidden",
-                          background: "rgba(255,255,255,0.06)",
+                          background: tokens.surfaceBg,
                           marginBottom: 7,
-                          border: "1px solid rgba(255,255,255,0.08)",
+                          border: `1px solid ${tokens.surfaceVariant}`,
                           position: "relative",
                         }}>
                           {look.img ? (
@@ -4958,7 +5236,7 @@ function ExplorerScreen({ goTo, goBack, cartCount, showToast, addItem, selectedL
                               onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
                             />
                           ) : (
-                            <div style={{ width: "100%", height: "100%", background: "linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02))" }} />
+                            <div style={{ width: "100%", height: "100%", background: "linear-gradient(135deg,#E8D8C4,#D4C0A8)" }} />
                           )}
                           {look.tag && (
                             <div style={{
@@ -4981,7 +5259,7 @@ function ExplorerScreen({ goTo, goBack, cartCount, showToast, addItem, selectedL
                         </div>
                         <div style={{
                           fontSize: 10,
-                          color: "rgba(255,255,255,0.65)",
+                          color: tokens.onSurfaceDefault,
                           fontFamily: "var(--font-gilroy)",
                           fontWeight: "var(--font-weight-medium)",
                           lineHeight: 1.3,
@@ -5003,8 +5281,10 @@ function ExplorerScreen({ goTo, goBack, cartCount, showToast, addItem, selectedL
 
           {/* Moodboard Tab Content (Mobile) */}
           {explorerTab === "moodboard" && (
-            <div style={{ padding: "4px 22px" }}>
+            <div style={{ padding: "12px 22px" }}>
+              <div style={{ background: "#2C2C2C", borderRadius: 16, padding: "16px 20px" }}>
               <MoodboardContent />
+              </div>
               
               {/* Action Buttons - removed duplicate (buttons already shown in Items tab) */}
               <div style={{ display: "none" }}>
@@ -5071,6 +5351,267 @@ function ExplorerScreen({ goTo, goBack, cartCount, showToast, addItem, selectedL
             </div>
           )}
         </div>
+
+        {/* ── Material Details ── */}
+        <div style={{ background: "white", margin: "8px 0 0" }}>
+          <div
+            onClick={() => setMaterialExpanded(p => !p)}
+            style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 22px", cursor: "pointer" }}
+          >
+            <div style={{ fontSize: 15, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)" }}>Material Details</div>
+            <span style={{ fontSize: 20, color: tokens.onSurfaceSecondary, transform: materialExpanded ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s", display: "inline-block" }}>⌄</span>
+          </div>
+          {materialExpanded && (
+            <div style={{ padding: "0 22px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
+              {[
+                { label: "Finish", value: "Matte / Satin (customisable)" },
+                { label: "Base Material", value: "Premium non-woven fabric" },
+                { label: "Thickness", value: "0.38 mm" },
+                { label: "Origin", value: "Italy · European collection" },
+                { label: "Washable", value: "Yes · damp cloth safe" },
+                { label: "Fire rating", value: "Class B1 certified" },
+              ].map(({ label, value }) => (
+                <div key={label} style={{ display: "flex", justifyContent: "space-between", paddingBottom: 12, borderBottom: `1px solid ${tokens.surfaceVariant}` }}>
+                  <span style={{ fontSize: 13, color: tokens.onSurfaceSecondary }}>{label}</span>
+                  <span style={{ fontSize: 13, fontWeight: 500, color: tokens.onSurfaceDefault, textAlign: "right", maxWidth: "55%" }}>{value}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* ── Add-ons ── */}
+        {(() => {
+          const ADDONS = [
+            { id: "painting",   icon: "🖌️", label: "Wall Painting",       sub: "2 coats, premium emulsion", price: 18000 },
+            { id: "electrical", icon: "⚡", label: "Electrical Upgrades",  sub: "Modular switches & concealed wiring", price: 12500 },
+            { id: "curtains",   icon: "🪟", label: "Curtains & Blinds",    sub: "Custom-fit, fabric of choice", price: 22000 },
+            { id: "lighting",   icon: "💡", label: "Accent Lighting",      sub: "LED coves + pendant fixtures", price: 15000 },
+          ];
+          const addonsTotal = [...selectedAddons].reduce((sum, id) => sum + (ADDONS.find(a => a.id === id)?.price ?? 0), 0);
+          return (
+            <div style={{ background: "white", margin: "8px 0 0", padding: "22px" }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 4 }}>Add-ons</div>
+              <div style={{ fontSize: 12, color: tokens.onSurfaceSecondary, marginBottom: 16 }}>Optional extras to complete the look</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {ADDONS.map(addon => {
+                  const checked = selectedAddons.has(addon.id);
+                  return (
+                    <div
+                      key={addon.id}
+                      onClick={() => setSelectedAddons(prev => { const next = new Set(prev); next.has(addon.id) ? next.delete(addon.id) : next.add(addon.id); return next; })}
+                      style={{ display: "flex", alignItems: "center", gap: 12, background: checked ? tokens.primaryVariant : tokens.surfaceBg, border: `1.5px solid ${checked ? tokens.primaryDefault : tokens.surfaceVariant}`, borderRadius: 12, padding: "12px 14px", cursor: "pointer", transition: "all 0.15s" }}
+                    >
+                      <span style={{ fontSize: 22, flexShrink: 0 }}>{addon.icon}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: tokens.onSurfaceDefault, lineHeight: 1.3 }}>{addon.label}</div>
+                        <div style={{ fontSize: 11, color: tokens.onSurfaceSecondary, marginTop: 2 }}>{addon.sub}</div>
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, flexShrink: 0 }}>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: checked ? tokens.primaryDefault : tokens.onSurfaceDefault }}>+{fmt(addon.price)}</span>
+                        <div style={{ width: 20, height: 20, borderRadius: 6, background: checked ? tokens.primaryDefault : "transparent", border: `2px solid ${checked ? tokens.primaryDefault : tokens.onSurfaceBorder}`, display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.15s" }}>
+                          {checked && <span style={{ color: "white", fontSize: 11 }}>✓</span>}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {addonsTotal > 0 && (
+                <div style={{ marginTop: 14, padding: "11px 14px", background: tokens.primaryVariant, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <span style={{ fontSize: 13, color: tokens.onSurfaceDefault, fontWeight: 500 }}>{selectedAddons.size} add-on{selectedAddons.size > 1 ? "s" : ""} selected</span>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: tokens.primaryDefault }}>+{fmt(addonsTotal)}</span>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* ── Similar Looks ── */}
+        {similarLooks.length > 0 && (
+          <div style={{ background: "white", margin: "8px 0 0", padding: "22px 0 22px" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 22px", marginBottom: 16 }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)" }}>Similar Looks</div>
+              <button
+                onClick={() => { setPrevScreen("explorer"); setScreen("matched-looks"); }}
+                style={{ background: "none", border: "none", color: tokens.primaryDefault, fontSize: 12, fontWeight: 600, fontFamily: "var(--font-gilroy)", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: 3 }}
+              >
+                See all <span style={{ fontSize: 14 }}>›</span>
+              </button>
+            </div>
+            <div style={{ display: "flex", gap: 12, overflowX: "auto", padding: "0 22px", scrollbarWidth: "none" } as React.CSSProperties}>
+              {similarLooks.map(look => (
+                <div key={look.id} onClick={() => setSelectedLook(look as SelectedLook)} style={{ flex: "0 0 auto", width: 140, cursor: "pointer" }}>
+                  <div style={{ width: 140, height: 110, borderRadius: 12, overflow: "hidden", background: tokens.surfaceBg, marginBottom: 8, border: `1px solid ${tokens.surfaceVariant}`, position: "relative" }}>
+                    {look.img
+                      ? <img src={look.img} alt={look.name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                      : <div style={{ width: "100%", height: "100%", background: "linear-gradient(135deg,#E8D8C4,#D4C0A8)" }} />}
+                    {look.tag && (
+                      <div style={{ position: "absolute", bottom: 5, left: 5, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(4px)", borderRadius: 4, padding: "2px 6px", fontSize: 8, color: "rgba(255,255,255,0.85)", fontWeight: 600, textTransform: "uppercase" as const, letterSpacing: "0.04em" }}>{look.tag}</div>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 11, fontWeight: 500, color: tokens.onSurfaceDefault, lineHeight: 1.35, marginBottom: 3, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{look.name}</div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: tokens.primaryDefault }}>{look.price}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── AR / Site Visit Section ── */}
+        <div style={{ background: "white", margin: "8px 0 0", padding: "22px" }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 4 }}>See it before you approve</div>
+          <div style={{ fontSize: 12, color: tokens.onSurfaceSecondary, lineHeight: 1.6, marginBottom: 16 }}>Our designer will do an online site visit and show you this look placed virtually on your walls before any work begins.</div>
+          <div style={{ display: "flex", gap: 10 }}>
+            {[
+              { icon: "📐", title: "Measure", desc: "Accurate wall dimensions" },
+              { icon: "🎨", title: "Visualise", desc: "AR preview on your wall" },
+              { icon: "✅", title: "Approve", desc: "Sign off before install" },
+            ].map(({ icon, title, desc }) => (
+              <div key={title} style={{ flex: 1, background: tokens.surfaceBg, borderRadius: 12, padding: "14px 10px", textAlign: "center" }}>
+                <div style={{ fontSize: 22, marginBottom: 6 }}>{icon}</div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: tokens.onSurfaceDefault, marginBottom: 3 }}>{title}</div>
+                <div style={{ fontSize: 10, color: tokens.onSurfaceSecondary, lineHeight: 1.4 }}>{desc}</div>
+              </div>
+            ))}
+          </div>
+          <button
+            onClick={() => { setShowBookingFlow(true); setBookingStep(1); }}
+            style={{ width: "100%", marginTop: 16, height: 46, background: tokens.primaryDefault, border: "none", borderRadius: 99, fontSize: 14, fontWeight: 700, color: "white", fontFamily: "var(--font-gilroy)", cursor: "pointer" }}
+          >
+            Book Free Site Visit
+          </button>
+        </div>
+
+        {/* ── Complete with these materials ── */}
+        <div style={{ background: "white", margin: "8px 0 0", padding: "22px 0 22px" }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 14, padding: "0 22px" }}>Complete with these materials</div>
+          <div style={{ display: "flex", gap: 12, overflowX: "auto", padding: "0 22px", scrollbarWidth: "none" } as React.CSSProperties}>
+            {[
+              { name: "Fluted Panel", finish: "Oak Veneer", price: "₹4,200/sqft", bg: "#F0EAE0" },
+              { name: "Textured Paint", finish: "Stone Effect", price: "₹180/sqft", bg: "#E8E8E8" },
+              { name: "Decorative Tiles", finish: "Geometric", price: "₹2,800/sqft", bg: "#EAE0F0" },
+              { name: "Mirror Panel", finish: "Bronze tint", price: "₹3,500/sqft", bg: "#E0EAF0" },
+            ].map(({ name, finish, price, bg }) => (
+              <div key={name} style={{ flex: "0 0 auto", width: 140, borderRadius: 12, overflow: "hidden", border: `1px solid ${tokens.surfaceVariant}` }}>
+                <div style={{ height: 100, background: bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <span style={{ fontSize: 32 }}>🪟</span>
+                </div>
+                <div style={{ padding: "10px 12px 12px" }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: tokens.onSurfaceDefault, marginBottom: 2 }}>{name}</div>
+                  <div style={{ fontSize: 10, color: tokens.onSurfaceSecondary, marginBottom: 6 }}>{finish}</div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: tokens.primaryDefault }}>{price}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Why Choose Livspace ── */}
+        <div style={{ background: tokens.surfaceBg, margin: "8px 0 0", padding: "22px" }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 16 }}>Why Choose Livspace</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            {[
+              { icon: "🏅", title: "Top-rated brand", desc: "4.7★ from 50,000+ customers" },
+              { icon: "🔒", title: "10-year warranty", desc: "On all installation work" },
+              { icon: "👷", title: "Vetted contractors", desc: "Background-checked pros" },
+              { icon: "💸", title: "Price guarantee", desc: "No hidden charges, ever" },
+            ].map(({ icon, title, desc }) => (
+              <div key={title} style={{ background: "white", borderRadius: 12, padding: "14px", display: "flex", flexDirection: "column", gap: 6 }}>
+                <span style={{ fontSize: 22 }}>{icon}</span>
+                <div style={{ fontSize: 12, fontWeight: 700, color: tokens.onSurfaceDefault }}>{title}</div>
+                <div style={{ fontSize: 10, color: tokens.onSurfaceSecondary, lineHeight: 1.4 }}>{desc}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── How it Works ── */}
+        <div style={{ background: "white", margin: "8px 0 0", padding: "22px" }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 20 }}>How it works</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+            {[
+              { num: 1, title: "Book a site visit", desc: "A designer visits your space and takes measurements" },
+              { num: 2, title: "Get a 3D preview", desc: "See your room transformed with AR before approving" },
+              { num: 3, title: "Sign off & schedule", desc: "Approve the design and pick an installation date" },
+              { num: 4, title: "Sit back & relax", desc: "Our team handles everything, with zero mess guarantee" },
+            ].map(({ num, title, desc }, i, arr) => (
+              <div key={num} style={{ display: "flex", gap: 14, paddingBottom: i < arr.length - 1 ? 20 : 0 }}>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                  <div style={{ width: 32, height: 32, borderRadius: "50%", background: tokens.primaryDefault, color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, flexShrink: 0 }}>{num}</div>
+                  {i < arr.length - 1 && <div style={{ width: 2, flex: 1, background: tokens.surfaceVariant, marginTop: 6 }} />}
+                </div>
+                <div style={{ paddingBottom: i < arr.length - 1 ? 4 : 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: tokens.onSurfaceDefault, marginBottom: 3 }}>{title}</div>
+                  <div style={{ fontSize: 12, color: tokens.onSurfaceSecondary, lineHeight: 1.5 }}>{desc}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Customer Reviews ── */}
+        <div style={{ background: "white", margin: "8px 0 0", padding: "22px" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)" }}>Customer Reviews</div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
+              <span style={{ fontSize: 22, fontWeight: 700, color: tokens.onSurfaceDefault }}>4.8</span>
+              <span style={{ fontSize: 12, color: tokens.onSurfaceSecondary }}>/5</span>
+            </div>
+          </div>
+          {/* Stars summary */}
+          <div style={{ display: "flex", gap: 2, marginBottom: 18 }}>
+            {[1,2,3,4,5].map(s => <span key={s} style={{ fontSize: 18, color: s <= 4 ? "#F19E2B" : tokens.surfaceVariant }}>★</span>)}
+            <span style={{ fontSize: 12, color: tokens.onSurfaceSecondary, marginLeft: 6 }}>2,341 reviews</span>
+          </div>
+          {/* Review cards */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {[
+              { name: "Priya M.", date: "Jan 2025", rating: 5, text: "Absolutely loved the outcome! The team was professional and the wall looks stunning. Worth every rupee." },
+              { name: "Rohan K.", date: "Dec 2024", rating: 5, text: "Smooth process from start to finish. The 3D preview helped me visualise exactly what I was getting." },
+              { name: "Aisha T.", date: "Nov 2024", rating: 4, text: "Great quality materials and very clean installation. Slight delay in scheduling but overall excellent." },
+            ].map(({ name, date, rating, text }) => (
+              <div key={name} style={{ padding: "14px", background: tokens.surfaceBg, borderRadius: 12 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: tokens.onSurfaceDefault }}>{name}</div>
+                  <div style={{ fontSize: 11, color: tokens.onSurfaceSecondary }}>{date}</div>
+                </div>
+                <div style={{ display: "flex", gap: 2, marginBottom: 8 }}>
+                  {[1,2,3,4,5].map(s => <span key={s} style={{ fontSize: 12, color: s <= rating ? "#F19E2B" : tokens.surfaceVariant }}>★</span>)}
+                </div>
+                <div style={{ fontSize: 12, color: tokens.onSurfaceSecondary, lineHeight: 1.55 }}>{text}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── FAQ ── */}
+        <div style={{ background: "white", margin: "8px 0 0", padding: "22px 22px 200px" }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 16 }}>Frequently Asked Questions</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+            {[
+              { q: "How long does installation take?", a: "Most wall design installations are completed within 1–2 days depending on the area. We'll give you an exact timeline after the site visit." },
+              { q: "Will my furniture need to be moved?", a: "Our team will carefully move any furniture near the work area and put it back once done. We ensure zero damage to your existing setup." },
+              { q: "What if I don't like the look after installation?", a: "We offer a 15-day satisfaction guarantee. If you're not happy, we'll work with you to fix it at no extra charge." },
+              { q: "Can I customise the colours?", a: "Yes! All our looks are fully customisable. Your designer will help you pick shades that match your existing décor." },
+              { q: "Is there a warranty?", a: "All installations come with a 10-year structural warranty and 2-year surface warranty on materials." },
+            ].map(({ q, a }, i) => (
+              <div key={i} style={{ borderBottom: i < 4 ? `1px solid ${tokens.surfaceVariant}` : "none" }}>
+                <div
+                  onClick={() => setOpenFaqIdx(p => p === i ? null : i)}
+                  style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 0", cursor: "pointer" }}
+                >
+                  <div style={{ fontSize: 13, fontWeight: 600, color: tokens.onSurfaceDefault, lineHeight: 1.4, flex: 1, paddingRight: 12 }}>{q}</div>
+                  <span style={{ fontSize: 18, color: tokens.onSurfaceSecondary, transform: openFaqIdx === i ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s", display: "inline-block", flexShrink: 0 }}>⌄</span>
+                </div>
+                {openFaqIdx === i && (
+                  <div style={{ fontSize: 12, color: tokens.onSurfaceSecondary, lineHeight: 1.6, paddingBottom: 16 }}>{a}</div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
       {/* End scrollable container */}
       </div>
 
@@ -6196,103 +6737,95 @@ function WallDesignDetail({ design, allDesigns, onBack, isDesktop, onBookConsult
     }, [isPaused, activeStep]);
 
     if (!isDesktop) {
+      const step = INSTALL_STEPS[activeStep];
       return (
         <div style={{ padding: "20px 16px" }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 20 }}>Installation Process</div>
-          {INSTALL_STEPS.map((step, i) => (
-            <div key={i} style={{ display: "flex", gap: 14 }}>
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0 }}>
-                <div style={{ width: 28, height: 28, borderRadius: "50%", background: tokens.primaryDefault, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "white", flexShrink: 0 }}>{step.num}</div>
-                {i < INSTALL_STEPS.length - 1 && <div style={{ width: 2, flex: 1, minHeight: 20, background: tokens.surfaceVariant, marginTop: 4 }} />}
-              </div>
-              <div style={{ flex: 1, paddingBottom: i < INSTALL_STEPS.length - 1 ? 20 : 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: tokens.onSurfaceDefault, marginBottom: 3 }}>{step.title}</div>
-                <div style={{ fontSize: 11, color: tokens.onSurfaceSecondary, lineHeight: 1.5, marginBottom: 10 }}>{step.desc}</div>
-                <div style={{ width: "100%", height: 170, borderRadius: 12, overflow: "hidden", background: "linear-gradient(135deg,#E8D8C4,#D4C0A8)" }}>
-                  <img src={step.img} alt={step.title} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      );
-    }
+          <div style={{ fontSize: 10, fontWeight: 700, color: tokens.primaryDefault, letterSpacing: "0.12em", marginBottom: 14, fontFamily: "var(--font-roboto)" }}>INSTALLATION PROCESS</div>
 
-    const step = INSTALL_STEPS[activeStep];
-
-    return (
-      <div style={{ padding: "20px 0" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 380px", gap: 48, alignItems: "start" }}>
-
-          {/* Left: featured image */}
-          <div style={{ position: "relative", borderRadius: 20, overflow: "hidden", background: "linear-gradient(135deg,#E8D8C4,#D4C0A8)", aspectRatio: "4/3" }}>
+          {/* Featured image */}
+          <div style={{ position: "relative", borderRadius: 16, overflow: "hidden", background: "linear-gradient(135deg,#E8D8C4,#D4C0A8)", height: 220, marginBottom: 24 }}>
             <img
               key={activeStep}
               src={step.img}
               alt={step.title}
-              style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", transition: "opacity 0.4s" }}
+              style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
               onError={e => { (e.target as HTMLImageElement).style.display = "none"; }}
             />
-            {/* Bottom bar */}
-            <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "20px 20px 20px", background: "linear-gradient(to top, rgba(0,0,0,0.5) 0%, transparent 100%)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: "white", background: "rgba(255,255,255,0.2)", borderRadius: 20, padding: "5px 14px", backdropFilter: "blur(4px)" }}>
+            <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "16px", background: "linear-gradient(to top, rgba(0,0,0,0.5) 0%, transparent 100%)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ fontSize: 11, fontWeight: 600, color: "white", background: "rgba(255,255,255,0.2)", borderRadius: 20, padding: "4px 12px" }}>
                 Step {activeStep + 1} of {INSTALL_STEPS.length}
               </span>
               <button
                 onClick={() => setIsPaused(p => !p)}
-                style={{ fontSize: 12, fontWeight: 600, color: "white", background: "rgba(255,255,255,0.2)", border: "none", borderRadius: 20, padding: "5px 14px", cursor: "pointer", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", gap: 5 }}
+                style={{ fontSize: 11, fontWeight: 600, color: "white", background: "rgba(255,255,255,0.2)", border: "none", borderRadius: 20, padding: "4px 12px", cursor: "pointer" }}
               >
                 {isPaused ? "▶ Resume" : "⏸ Pause"}
               </button>
             </div>
           </div>
 
-          {/* Right: vertical stepper */}
-          <div style={{ paddingTop: 4 }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: tokens.primaryDefault, letterSpacing: "0.12em", marginBottom: 20, fontFamily: "var(--font-roboto)" }}>INSTALLATION PROCESS</div>
-            <div>
-              {INSTALL_STEPS.map((s, i) => {
-                const isActive = i === activeStep;
-                const isDone   = i < activeStep;
-                return (
-                  <div key={i} style={{ display: "flex", gap: 16, cursor: "pointer" }} onClick={() => { setActiveStep(i); setIsPaused(true); }}>
-                    {/* Circle + connector line */}
-                    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0 }}>
-                      <div style={{
-                        width: 36, height: 36,
-                        borderRadius: isActive ? 10 : "50%",
-                        background: isDone ? tokens.primaryDefault : isActive ? tokens.primaryDefault : "#E0E0E0",
-                        color: isDone || isActive ? "white" : "#999",
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        fontSize: isDone ? 14 : 13, fontWeight: 700,
-                        flexShrink: 0, transition: "all 0.3s",
-                      }}>
-                        {isDone ? "✓" : s.num}
-                      </div>
-                      {i < INSTALL_STEPS.length - 1 && (
-                        <div style={{ width: 2, flex: 1, minHeight: 24, background: isDone ? tokens.primaryDefault : "#E0E0E0", marginTop: 4, transition: "background 0.3s" }} />
-                      )}
-                    </div>
-
-                    {/* Step content */}
-                    <div style={{ flex: 1, paddingBottom: i < INSTALL_STEPS.length - 1 ? 8 : 0 }}>
-                      {isActive ? (
-                        <div style={{ background: "white", borderRadius: 12, padding: "14px 16px", boxShadow: "0 2px 16px rgba(0,0,0,0.08)", marginBottom: 4 }}>
-                          <div style={{ fontSize: 14, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 6 }}>{s.title}</div>
-                          <div style={{ height: 3, width: 36, background: tokens.primaryDefault, borderRadius: 2, marginBottom: 10 }} />
-                          <div style={{ fontSize: 12, color: tokens.onSurfaceSecondary, lineHeight: 1.65 }}>{s.desc}</div>
-                        </div>
-                      ) : (
-                        <div style={{ padding: "8px 0 16px", fontSize: 13, fontWeight: isDone ? 500 : 400, color: isDone ? tokens.onSurfaceDefault : tokens.onSurfaceSecondary, transition: "color 0.2s" }}>
-                          {s.title}
-                        </div>
-                      )}
-                    </div>
+          {/* Vertical stepper */}
+          {INSTALL_STEPS.map((s, i) => {
+            const isActive = i === activeStep;
+            const isDone   = i < activeStep;
+            return (
+              <div key={i} style={{ display: "flex", gap: 14, cursor: "pointer" }} onClick={() => { setActiveStep(i); setIsPaused(true); }}>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0 }}>
+                  <div style={{ width: 32, height: 32, borderRadius: isActive ? 8 : "50%", background: isDone ? tokens.primaryDefault : isActive ? tokens.primaryDefault : "#E0E0E0", color: isDone || isActive ? "white" : "#999", display: "flex", alignItems: "center", justifyContent: "center", fontSize: isDone ? 13 : 12, fontWeight: 700, flexShrink: 0, transition: "all 0.3s" }}>
+                    {isDone ? "✓" : s.num}
                   </div>
-                );
-              })}
-            </div>
+                  {i < INSTALL_STEPS.length - 1 && <div style={{ width: 2, flex: 1, minHeight: 20, background: isDone ? tokens.primaryDefault : "#E0E0E0", marginTop: 4, transition: "background 0.3s" }} />}
+                </div>
+                <div style={{ flex: 1, paddingBottom: i < INSTALL_STEPS.length - 1 ? 8 : 0 }}>
+                  {isActive ? (
+                    <div style={{ background: "white", borderRadius: 12, padding: "12px 14px", boxShadow: "0 2px 12px rgba(0,0,0,0.08)", marginBottom: 4 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: tokens.onSurfaceDefault, fontFamily: "var(--font-gilroy)", marginBottom: 5 }}>{s.title}</div>
+                      <div style={{ height: 3, width: 32, background: tokens.primaryDefault, borderRadius: 2, marginBottom: 8 }} />
+                      <div style={{ fontSize: 11, color: tokens.onSurfaceSecondary, lineHeight: 1.65 }}>{s.desc}</div>
+                    </div>
+                  ) : (
+                    <div style={{ padding: "6px 0 16px", fontSize: 12, fontWeight: isDone ? 500 : 400, color: isDone ? tokens.onSurfaceDefault : tokens.onSurfaceSecondary }}>
+                      {s.title}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    return (
+      <div style={{ padding: "20px 0" }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: tokens.primaryDefault, letterSpacing: "0.12em", marginBottom: 28, fontFamily: "var(--font-roboto)" }}>INSTALLATION PROCESS</div>
+
+        {/* Timeline circles row */}
+        <div style={{ position: "relative", marginBottom: 28 }}>
+          {/* Connecting line */}
+          <div style={{ position: "absolute", top: "50%", left: "12.5%", right: "12.5%", height: 2, background: "#DDDDDD", transform: "translateY(-50%)", zIndex: 0 }} />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", position: "relative", zIndex: 1 }}>
+            {INSTALL_STEPS.map((s, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: "center" }}>
+                <div style={{ width: 44, height: 44, borderRadius: "50%", background: tokens.primaryDefault, color: "white", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 700, boxShadow: "0 0 0 4px #EDEEF7" }}>
+                  {s.num}
+                </div>
+              </div>
+            ))}
           </div>
+        </div>
+
+        {/* 4-column content grid */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }}>
+          {INSTALL_STEPS.map((s, i) => (
+            <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+              <div style={{ width: "100%", height: 180, borderRadius: 12, overflow: "hidden", background: "linear-gradient(135deg,#E8D8C4,#D4C0A8)", marginBottom: 12 }}>
+                <img src={s.img} alt={s.title} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} onError={e => { (e.target as HTMLImageElement).style.display = "none"; }} />
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: tokens.onSurfaceDefault, marginBottom: 4, textAlign: "center" }}>{s.title}</div>
+              <div style={{ fontSize: 11, color: tokens.onSurfaceSecondary, lineHeight: 1.5, textAlign: "center" }}>{s.desc}</div>
+            </div>
+          ))}
         </div>
       </div>
     );
